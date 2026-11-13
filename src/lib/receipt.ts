@@ -1,7 +1,7 @@
 import { Linking } from 'react-native';
 
 import { formatDateTime, formatISODate, soles, toWhatsAppNumber } from '@/lib/format';
-import type { Venta } from '@/types/db';
+import { ETAPA_LABEL, ETAPAS_FLUJO, type Pedido, type Venta } from '@/types/db';
 
 const BUSINESS_NAME = process.env.EXPO_PUBLIC_BUSINESS_NAME || 'Muebles de Melamina';
 const BUSINESS_PHONE = process.env.EXPO_PUBLIC_BUSINESS_PHONE || '';
@@ -55,6 +55,41 @@ export async function sendReceiptByWhatsApp(venta: Venta): Promise<void> {
   const number = toWhatsAppNumber(venta.clienteTelefono);
   const url = number ? `https://wa.me/${number}?text=${text}` : `https://wa.me/?text=${text}`;
   await Linking.openURL(url);
+}
+
+/** Mensaje de estado de un pedido a medida para el cliente */
+export function buildPedidoText(p: Pedido): string {
+  const lines: string[] = [];
+  lines.push(`🪵 *${BUSINESS_NAME}*`);
+  lines.push('');
+  lines.push(`Hola ${p.clienteNombre.split(' ')[0]} 👋, le escribimos sobre su pedido *${p.codigo}*:`);
+  lines.push(`🛠️ ${p.descripcion}`);
+  if (p.medidas) lines.push(`📐 Medidas: ${p.medidas}`);
+  lines.push('');
+  if (p.etapa === 'cancelado') {
+    lines.push('Estado: *Cancelado*');
+  } else if (p.etapa === 'entregado') {
+    lines.push('Estado: *Entregado* ✅');
+  } else {
+    const paso = ETAPAS_FLUJO.indexOf(p.etapa) + 1;
+    lines.push(`Estado: *${ETAPA_LABEL[p.etapa]}* (paso ${paso} de ${ETAPAS_FLUJO.length})`);
+    if (p.fechaEntrega) lines.push(`📦 Entrega estimada: ${formatISODate(p.fechaEntrega, true)}`);
+  }
+  lines.push('');
+  lines.push(`Total: ${soles(p.precio)}`);
+  lines.push(`Pagado: ${soles(p.pagado)}`);
+  lines.push(p.saldo > 0 ? `*Saldo por cobrar: ${soles(p.saldo)}*` : '*Pedido pagado por completo* 🙌');
+  if (BUSINESS_PHONE) {
+    lines.push('');
+    lines.push(`Consultas: ${BUSINESS_PHONE}`);
+  }
+  return lines.join('\n');
+}
+
+export async function sendPedidoByWhatsApp(p: Pedido): Promise<void> {
+  const text = encodeURIComponent(buildPedidoText(p));
+  const number = toWhatsAppNumber(p.clienteTelefono);
+  await Linking.openURL(number ? `https://wa.me/${number}?text=${text}` : `https://wa.me/?text=${text}`);
 }
 
 /** Abre un chat de WhatsApp con un número (sin mensaje) */

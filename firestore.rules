@@ -391,8 +391,10 @@ service cloud.firestore {
       return itemTipo == 'producto' ? 'productos' : 'materiales';
     }
 
+    // Campos opcionales: solo un consumo de material ligado a un pedido a medida los lleva
     function movimientoBaseValido(m) {
-      return exactamente(m, movimientoCampos())
+      return m.keys().hasAll(movimientoCampos())
+        && m.keys().hasOnly(movimientoCampos().concat(['pedidoId', 'costoTotalCent']))
         && m.itemTipo in ['producto', 'material']
         && m.itemId is string && m.itemNombre is string
         && m.cantidad is number
@@ -419,12 +421,33 @@ service cloud.firestore {
       return m.ventaId == null && m.indiceItem == null;
     }
 
+    function sinPedido(m) {
+      return m.get('pedidoId', null) == null && m.get('costoTotalCent', null) == null;
+    }
+
+    // Consumo de material usado en un pedido a medida (3 lecturas: material
+    // antes, pedido después). El costo es cantidad × último costo del material
+    // (céntimos, ±1 por redondeo) y el pedido lo suma en la misma transacción.
+    function consumoDePedidoValido(m, movId) {
+      let pedido = getAfter(ruta('pedidos', m.pedidoId)).data;
+      let costo = m.costoUnitario;
+      let exacto = costo == null ? 0 : m.cantidad * costo * 100;
+      return m.pedidoId is string
+        && m.tipo == 'salida'
+        && m.costoTotalCent is int && m.costoTotalCent >= 0
+        && costo == get(ruta('materiales', m.itemId)).data.get('ultimoCosto', null)
+        && m.costoTotalCent - exacto <= 1 && m.costoTotalCent - exacto >= -1
+        && pedido.ultimoMovimientoId == movId
+        && pedido.etapa != 'cancelado';
+    }
+
     // 3 lecturas: ventas/{v} (antes y después) y productos/{id} (después)
     function salidaPorVentaValida(movId) {
       let m = request.resource.data;
       let venta = getAfter(ruta('ventas', m.ventaId)).data;
       let item = venta.items[m.indiceItem];
       return movimientoBaseValido(m)
+        && sinPedido(m)
         && m.itemTipo == 'producto'
         && m.ventaId is string
         && movId == m.ventaId + '_' + m.itemId
@@ -441,6 +464,7 @@ service cloud.firestore {
     function entradaPorAnulacionValida(movId) {
       let m = request.resource.data;
       return movimientoBaseValido(m)
+        && sinPedido(m)
         && m.itemTipo == 'producto'
         && m.ventaId is string
         && movId == m.ventaId + '_' + m.itemId + '_anul'
@@ -458,9 +482,10 @@ service cloud.firestore {
         && sinVenta(m)
         && m.cantidad > 0
         && (
-          (m.tipo == 'entrada' && m.stockNuevo == m.stockAnterior + m.cantidad)
+          (m.tipo == 'entrada' && m.stockNuevo == m.stockAnterior + m.cantidad && sinPedido(m))
           || (m.tipo == 'salida' && m.stockNuevo == m.stockAnterior - m.cantidad
-              && m.proveedorId == null && m.proveedorNombre == null)
+              && m.proveedorId == null && m.proveedorNombre == null
+              && (sinPedido(m) || consumoDePedidoValido(m, movId)))
         )
         && itemQuedaCon(m, movId);
     }
@@ -470,6 +495,7 @@ service cloud.firestore {
       let m = request.resource.data;
       return movimientoBaseValido(m)
         && sinVenta(m)
+        && sinPedido(m)
         && m.cantidad != 0
         && m.cantidad == m.stockNuevo - m.stockAnterior
         && m.nota is string && m.nota.size() >= 3 && m.nota.size() <= 200
@@ -492,29 +518,34 @@ service cloud.firestore {
     }
 
     // ==================================================================
-    // contadores/boletas — correlativo de boletas
-    //   Solo sube de 1 en 1 y solo junto con la venta que recibe ese número.
-    //   El admin puede cambiar la serie (B001, B002...).
+    // contadores/boletas y contadores/pedidos — correlativos
+    //   Solo suben de 1 en 1 y solo junto con la venta / el pedido que recibe
+    //   ese número (1 lectura). Un documento antiguo nunca tiene el número
+    //   siguiente, así que no hace falta verificar que sea nuevo.
+    //   El admin puede cambiar la serie (B001, B002... / P).
     // ==================================================================
+    function contadorSube(campoId) {
+      let c = request.resource.data;
+      return exactamente(c, ['serie', 'ultimo', campoId])
+        && c.serie is string
+        && c.ultimo == (resource == null ? 0 : resource.data.ultimo) + 1
+        && (resource == null || c.serie == resource.data.serie);
+    }
+
     match /contadores/{id} {
       allow read: if esUsuarioActivo();
       allow delete: if false;
 
-      // 1 lectura: ventas/{ultimaVentaId} (después). Una venta antigua nunca
-      // tiene el número siguiente, así que no hace falta verificar que sea nueva.
-      allow create, update: if id == 'boletas' && (
-          (
-            exactamente(request.resource.data, ['serie', 'ultimo', 'ultimaVentaId'])
-            && request.resource.data.serie is string
-            && request.resource.data.ultimo == (resource == null ? 0 : resource.data.ultimo) + 1
-            && (resource == null || request.resource.data.serie == resource.data.serie)
-            && getAfter(ruta('ventas', request.resource.data.ultimaVentaId)).data.numeroBoleta == request.resource.data.ultimo
-          )
-          || (
-            resource != null && esAdmin()
-            && cambiaSolo(['serie'])
-            && request.resource.data.serie is string && request.resource.data.serie.size() <= 8
-          )
+      allow create, update: if (
+          id == 'boletas' && contadorSube('ultimaVentaId')
+          && getAfter(ruta('ventas', request.resource.data.ultimaVentaId)).data.numeroBoleta == request.resource.data.ultimo
+        ) || (
+          id == 'pedidos' && contadorSube('ultimoPedidoId')
+          && getAfter(ruta('pedidos', request.resource.data.ultimoPedidoId)).data.numero == request.resource.data.ultimo
+        ) || (
+          resource != null && esAdmin()
+          && cambiaSolo(['serie'])
+          && request.resource.data.serie is string && request.resource.data.serie.size() <= 8
         );
     }
 
@@ -525,13 +556,14 @@ service cloud.firestore {
     // ==================================================================
     function resumenCampos() {
       return ['dia', 'numVentas', 'totalCent', 'costoCent', 'unidades', 'porMetodoCent', 'pagosPedidosCent',
-              'ultimaVentaId', 'actualizadoEn'];
+              'ultimaVentaId', 'ultimoPago', 'actualizadoEn'];
     }
 
     function resumenPrevio(dia) {
       return resource == null
         ? { 'dia': dia, 'numVentas': 0, 'totalCent': 0, 'costoCent': 0, 'unidades': 0,
-            'porMetodoCent': { 'Yape': 0, 'Plin': 0, 'Efectivo': 0, 'Tarjeta': 0 }, 'pagosPedidosCent': 0 }
+            'porMetodoCent': { 'Yape': 0, 'Plin': 0, 'Efectivo': 0, 'Tarjeta': 0 }, 'pagosPedidosCent': 0,
+            'ultimaVentaId': null, 'ultimoPago': null }
         : resource.data;
     }
 
@@ -543,8 +575,38 @@ service cloud.firestore {
         && r.costoCent == p.costoCent + signo * v.costoTotalCent
         && r.unidades == p.unidades + signo * v.unidades
         && r.pagosPedidosCent == p.pagosPedidosCent
+        && r.ultimoPago == p.get('ultimoPago', null)
         && r.porMetodoCent.diff(p.porMetodoCent).affectedKeys().hasOnly([v.metodoPago])
         && r.porMetodoCent[v.metodoPago] == p.porMetodoCent[v.metodoPago] + signo * v.totalCent;
+    }
+
+    // ¿El pago en pedidos/{id}.pagos[indice] es nuevo en esta transacción? (2 lecturas)
+    function pagoEsNuevo(rutaPedido, indice) {
+      return !exists(rutaPedido) ? indice == 0 : get(rutaPedido).data.pagos.size() == indice;
+    }
+
+    // Pago de pedido a medida: suma exactamente su monto a pagosPedidosCent
+    // y no toca los totales de ventas (3 lecturas: pedido antes y después).
+    function resumenSumaPago(dia) {
+      let r = request.resource.data;
+      let p = resumenPrevio(dia);
+      let ref = r.ultimoPago;
+      let rutaPedido = ruta('pedidos', ref.pedidoId);
+      let pago = getAfter(rutaPedido).data.pagos[ref.indice];
+      return exactamente(r, resumenCampos())
+        && r.dia == dia
+        && ref.keys().hasOnly(['pedidoId', 'indice'])
+        && ref.pedidoId is string && ref.indice is int && ref.indice >= 0
+        && pagoEsNuevo(rutaPedido, ref.indice)
+        && pago.dia == dia
+        && pago.usuarioId == request.auth.uid
+        && r.pagosPedidosCent == p.pagosPedidosCent + pago.montoCent
+        && r.numVentas == p.numVentas
+        && r.totalCent == p.totalCent
+        && r.costoCent == p.costoCent
+        && r.unidades == p.unidades
+        && r.porMetodoCent == p.porMetodoCent
+        && r.ultimaVentaId == p.get('ultimaVentaId', null);
     }
 
     // 2 lecturas: ventas/{v} (antes y después)
@@ -577,7 +639,167 @@ service cloud.firestore {
           request.resource.data.numVentas == resumenPrevio(dia).numVentas + 1 && resumenSumaVenta(dia)
         ) || (
           request.resource.data.numVentas == resumenPrevio(dia).numVentas - 1 && esAdmin() && resumenRestaAnulacion(dia)
+        ) || (
+          request.resource.data.numVentas == resumenPrevio(dia).numVentas
+          && request.resource.data.pagosPedidosCent > resumenPrevio(dia).pagosPedidosCent
+          && esUsuarioActivo() && resumenSumaPago(dia)
         );
+    }
+
+    // ==================================================================
+    // pedidos/{id} — pedidos a medida
+    //   Crear: usuario activo, etapa "cotizado", correlativo P-0001 en la misma
+    //   transacción y, si trae adelanto, el resumen del día debe registrarlo.
+    //   Actualizar (un tipo de cambio por escritura):
+    //     - etapa: avanzar/retroceder (activo) o cancelar (admin), +1 historial
+    //     - pago: +1 pago, pagado/saldo cuadrados y sumado al resumen del día
+    //     - consumo de material: suma el costo de un movimiento nuevo
+    //     - datos: descripción, medidas, entrega (activo); precio solo admin
+    //   Nunca se borran. Un pedido cancelado ya no cambia.
+    // ==================================================================
+    function pedidoCampos() {
+      return ['numero', 'codigo', 'clienteId', 'clienteNombre', 'clienteTelefono', 'descripcion', 'medidas',
+              'materialColor', 'notas', 'precioCent', 'pagadoCent', 'saldoCent', 'costoMaterialesCent', 'etapa',
+              'historialEtapas', 'pagos', 'fechaEntrega', 'vendedorId', 'vendedorNombre', 'creadoEn',
+              'actualizadoEn', 'ultimoMovimientoId'];
+    }
+
+    function etapaValida(e) {
+      return e in ['cotizado', 'corte', 'enchapado', 'armado', 'entrega', 'entregado', 'cancelado'];
+    }
+
+    // Fechas dentro de arreglos (no admiten serverTimestamp): ±15 min del servidor
+    function fechaCercana(t) {
+      return t is timestamp
+        && t > request.time - duration.value(15, 'm')
+        && t < request.time + duration.value(15, 'm');
+    }
+
+    function pagoValido(pago) {
+      return exactamente(pago, ['montoCent', 'metodo', 'fecha', 'dia', 'usuarioId', 'usuarioNombre', 'nota'])
+        && pago.montoCent is int && pago.montoCent > 0
+        && pago.metodo in ['Yape', 'Plin', 'Efectivo', 'Tarjeta']
+        && fechaCercana(pago.fecha)
+        && esDiaDeHoy(pago.dia)
+        && pago.usuarioId == request.auth.uid
+        && pago.usuarioNombre is string
+        && esTextoOpcional(pago.nota);
+    }
+
+    function historialValido(h, etapa) {
+      return exactamente(h, ['etapa', 'fecha', 'usuarioId', 'usuarioNombre', 'nota'])
+        && h.etapa == etapa
+        && fechaCercana(h.fecha)
+        && h.usuarioId == request.auth.uid
+        && h.usuarioNombre is string
+        && esTextoOpcional(h.nota);
+    }
+
+    function pedidoDatosValidos(d) {
+      return exactamente(d, pedidoCampos())
+        && d.clienteNombre is string && d.clienteNombre.size() >= 1 && d.clienteNombre.size() <= 100
+        && esTextoOpcional(d.clienteId)
+        && esTextoOpcional(d.clienteTelefono)
+        && d.descripcion is string && d.descripcion.size() >= 3 && d.descripcion.size() <= 500
+        && esTextoOpcional(d.medidas)
+        && esTextoOpcional(d.materialColor)
+        && esTextoOpcional(d.notas)
+        && esTextoOpcional(d.fechaEntrega)
+        && d.precioCent is int && d.precioCent > 0
+        && esEnteroNoNegativo(d.pagadoCent)
+        && d.pagadoCent <= d.precioCent
+        && d.saldoCent == d.precioCent - d.pagadoCent
+        && esEnteroNoNegativo(d.costoMaterialesCent)
+        && etapaValida(d.etapa)
+        && d.historialEtapas is list
+        && d.pagos is list;
+    }
+
+    // 3 lecturas: perfil, contador y (si hay adelanto) resumen del día
+    function pedidoNuevoValido(id) {
+      let d = request.resource.data;
+      let contador = getAfter(ruta('contadores', 'pedidos')).data;
+      return pedidoDatosValidos(d)
+        && d.vendedorId == request.auth.uid
+        && d.vendedorNombre is string
+        && d.creadoEn == request.time
+        && d.etapa == 'cotizado'
+        && d.historialEtapas.size() == 1
+        && historialValido(d.historialEtapas[0], 'cotizado')
+        && d.costoMaterialesCent == 0
+        && d.ultimoMovimientoId == null
+        && d.numero is int
+        && d.numero == contador.ultimo
+        && contador.ultimoPedidoId == id
+        && d.codigo is string && d.codigo.matches(contador.serie + '-[0-9]{4,}')
+        && (
+          d.pagos.size() == 0
+            ? d.pagadoCent == 0
+            : (
+              d.pagos.size() == 1
+              && pagoValido(d.pagos[0])
+              && d.pagadoCent == d.pagos[0].montoCent
+              && getAfter(ruta('resumen_diario', d.pagos[0].dia)).data.ultimoPago == { 'pedidoId': id, 'indice': 0 }
+            )
+        );
+    }
+
+    function pedidoCambiaEtapa() {
+      let n = request.resource.data;
+      let o = resource.data;
+      let total = n.historialEtapas.size();
+      return cambiaSolo(['etapa', 'historialEtapas', 'actualizadoEn'])
+        && n.etapa != o.etapa
+        && total == o.historialEtapas.size() + 1
+        && n.historialEtapas[0:total - 1] == o.historialEtapas
+        && historialValido(n.historialEtapas[total - 1], n.etapa)
+        && (n.etapa == 'cancelado' ? esAdmin() : esUsuarioActivo());
+    }
+
+    // 2 lecturas: perfil y resumen del día (después)
+    function pedidoRegistraPago(id) {
+      let n = request.resource.data;
+      let o = resource.data;
+      let total = n.pagos.size();
+      let pago = n.pagos[total - 1];
+      return cambiaSolo(['pagos', 'pagadoCent', 'saldoCent', 'actualizadoEn'])
+        && esUsuarioActivo()
+        && total == o.pagos.size() + 1
+        // (una porción vacía [0:0] no se puede comparar: el primer pago se trata aparte)
+        && (total == 1 || n.pagos[0:total - 1] == o.pagos)
+        && pagoValido(pago)
+        && n.pagadoCent == o.pagadoCent + pago.montoCent
+        && getAfter(ruta('resumen_diario', pago.dia)).data.ultimoPago == { 'pedidoId': id, 'indice': total - 1 };
+    }
+
+    // 2 lecturas: movimiento antes y después
+    function pedidoSumaConsumo(id) {
+      let n = request.resource.data;
+      let movId = n.ultimoMovimientoId;
+      let mov = getAfter(ruta('movimientos', movId)).data;
+      return cambiaSolo(['costoMaterialesCent', 'ultimoMovimientoId', 'actualizadoEn'])
+        && movId is string
+        && !exists(ruta('movimientos', movId))
+        && mov.pedidoId == id
+        && mov.tipo == 'salida'
+        && mov.itemTipo == 'material'
+        && mov.usuarioId == request.auth.uid
+        && n.costoMaterialesCent == resource.data.costoMaterialesCent + mov.costoTotalCent;
+    }
+
+    function pedidoEditaDatos() {
+      return cambiaSolo(['clienteNombre', 'clienteTelefono', 'descripcion', 'medidas', 'materialColor', 'notas',
+                         'fechaEntrega', 'precioCent', 'saldoCent', 'actualizadoEn'])
+        && (request.resource.data.precioCent == resource.data.precioCent ? esUsuarioActivo() : esAdmin());
+    }
+
+    match /pedidos/{id} {
+      allow read: if esUsuarioActivo();
+      allow delete: if false;
+      allow create: if esUsuarioActivo() && pedidoNuevoValido(id);
+      allow update: if resource.data.etapa != 'cancelado'
+        && pedidoDatosValidos(request.resource.data)
+        && (pedidoCambiaEtapa() || pedidoRegistraPago(id) || pedidoSumaConsumo(id) || pedidoEditaDatos());
     }
 
     // ------------------------------------------------------------------

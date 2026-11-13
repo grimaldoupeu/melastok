@@ -102,44 +102,67 @@ export async function ingresarMaterialTx(
   return movRef.id;
 }
 
-/** Salida de material por consumo en producción (admin y vendedor) */
+/**
+ * Salida de material por consumo en producción (admin y vendedor).
+ * Si se indica un pedido a medida, en la misma transacción se suma el costo
+ * del material consumido (cantidad × último costo, en céntimos) a su
+ * costoMaterialesCent.
+ */
 export async function salidaMaterialTx(
   db: Firestore,
-  input: { materialId: string; cantidad: number; nota: string | null },
+  input: { materialId: string; cantidad: number; nota: string | null; pedidoId?: string | null },
   usuario: Usuario
 ): Promise<string> {
   const cantidad = redondearCantidad(input.cantidad);
   if (!(cantidad > 0)) throw new InventarioError('Ingresa una cantidad mayor a 0');
   const ref = doc(db, 'materiales', input.materialId);
+  const pedidoRef = input.pedidoId ? doc(db, 'pedidos', input.pedidoId) : null;
   const movRef = doc(collection(db, 'movimientos'));
 
   await runTransaction(db, async (tx) => {
-    const snap = await tx.get(ref);
+    const [snap, pedidoSnap] = await Promise.all([tx.get(ref), pedidoRef ? tx.get(pedidoRef) : Promise.resolve(null)]);
     if (!snap.exists()) throw new InventarioError('El material ya no existe');
     const m = snap.data() as DocumentData;
     const stockAnterior = Number(m.stock ?? 0);
     const stockNuevo = stockAnterior - cantidad;
     if (stockNuevo < 0) throw new InventarioError(`Stock insuficiente de "${m.nombre}": quedan ${stockAnterior} ${m.unidad ?? ''}`.trim());
+    const costoUnitario = m.ultimoCosto == null ? null : Number(m.ultimoCosto);
+    const costoTotalCent = costoUnitario == null ? 0 : Math.round(cantidad * costoUnitario * 100);
+
+    let pedidoCodigo: string | null = null;
+    if (pedidoRef) {
+      if (!pedidoSnap || !pedidoSnap.exists()) throw new InventarioError('El pedido ya no existe');
+      const p = pedidoSnap.data() as DocumentData;
+      if (p.etapa === 'cancelado') throw new InventarioError('El pedido está cancelado');
+      pedidoCodigo = String(p.codigo);
+      tx.update(pedidoRef, {
+        costoMaterialesCent: Number(p.costoMaterialesCent ?? 0) + costoTotalCent,
+        ultimoMovimientoId: movRef.id,
+        actualizadoEn: serverTimestamp(),
+      });
+    }
+
     tx.update(ref, { stock: stockNuevo, ultimoMovimientoId: movRef.id, actualizadoEn: serverTimestamp() });
-    tx.set(
-      movRef,
-      datosMovimiento(
+    const nota = input.nota?.trim() || (pedidoCodigo ? `Pedido ${pedidoCodigo}` : null);
+    tx.set(movRef, {
+      ...datosMovimiento(
         {
           tipo: 'salida',
           itemTipo: 'material',
           itemId: input.materialId,
           itemNombre: String(m.nombre),
           cantidad,
-          costoUnitario: m.ultimoCosto == null ? null : Number(m.ultimoCosto),
+          costoUnitario,
           stockAnterior,
           stockNuevo,
           proveedorId: null,
           proveedorNombre: null,
-          nota: input.nota?.trim() || null,
+          nota,
         },
         usuario
-      )
-    );
+      ),
+      ...(pedidoRef ? { pedidoId: pedidoRef.id, costoTotalCent } : {}),
+    });
   });
   return movRef.id;
 }

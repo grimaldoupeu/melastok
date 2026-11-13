@@ -14,10 +14,12 @@ import { parseNumber, qty, soles } from '@/lib/format';
 import { crearMaterial, ingresarMaterial, registrarConsumoMaterial } from '@/services/inventario';
 import { actualizarMaterial, eliminarMaterial, observarMaterial, type MaterialInput } from '@/services/materiales';
 import { observarKardexItem } from '@/services/movimientos';
+import { observarPedidosAbiertos } from '@/services/pedidos';
 import { observarProveedores } from '@/services/proveedores';
-import { TIPOS_MATERIAL, UNIDADES_MATERIAL, type Material, type Movimiento, type Proveedor, type TipoMaterial } from '@/types/db';
+import { TIPOS_MATERIAL, UNIDADES_MATERIAL, type Material, type Movimiento, type Pedido, type Proveedor, type TipoMaterial } from '@/types/db';
 
 const SIN_PROVEEDOR = '__ninguno__';
+const SIN_PEDIDO = '__ninguno__';
 
 export default function MaterialScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -73,6 +75,8 @@ function MaterialDetail({ material, proveedores, onEdit }: { material: Material;
   const [nota, setNota] = useState('');
   const [saving, setSaving] = useState(false);
   const [showAjuste, setShowAjuste] = useState(false);
+  const [pedidoId, setPedidoId] = useState<string>(SIN_PEDIDO);
+  const pedidos = useRealtime<Pedido[]>((onData, onError) => observarPedidosAbiertos(onData, onError), [], op === 'consumo');
 
   const kardex = useRealtime<Movimiento[]>((onData, onError) => observarKardexItem(material.id, onData, onError, 30), [material.id]);
 
@@ -101,8 +105,11 @@ function MaterialDetail({ material, proveedores, onEdit }: { material: Material;
         );
         toast.show(`Ingreso de ${qty(n)} ${material.unidad} registrado`, 'success');
       } else {
-        await registrarConsumoMaterial({ materialId: material.id, cantidad: n, nota: nota.trim() || null }, usuario);
-        toast.show(`Consumo de ${qty(n)} ${material.unidad} registrado`, 'success');
+        const pedido = pedidoId !== SIN_PEDIDO ? pedidoId : null;
+        await registrarConsumoMaterial({ materialId: material.id, cantidad: n, nota: nota.trim() || null, pedidoId: pedido }, usuario);
+        const cod = pedidos.data?.find((p) => p.id === pedido)?.codigo;
+        toast.show(`Consumo de ${qty(n)} ${material.unidad} registrado${cod ? ` en ${cod}` : ''}`, 'success');
+        setPedidoId(SIN_PEDIDO);
       }
       setCantidad('');
       setNota('');
@@ -115,6 +122,10 @@ function MaterialDetail({ material, proveedores, onEdit }: { material: Material;
 
   const proveedorOptions = [{ value: SIN_PROVEEDOR, label: 'Sin proveedor' }, ...proveedores.map((p) => ({ value: p.id, label: p.nombre }))];
   const total = parseNumber(cantidad) * parseNumber(costo);
+  const pedidoOptions = [
+    { value: SIN_PEDIDO, label: 'Ninguno (uso general)' },
+    ...(pedidos.data ?? []).map((p) => ({ value: p.id, label: `${p.codigo} · ${p.clienteNombre}` })),
+  ];
 
   return (
     <Screen edges={['top', 'bottom']}>
@@ -186,7 +197,24 @@ function MaterialDetail({ material, proveedores, onEdit }: { material: Material;
                 />
                 <PickerField label="Proveedor" value={proveedorId} options={proveedorOptions} onChange={setProveedorId} icon="business-outline" />
               </>
-            ) : null}
+            ) : (
+              <View style={{ gap: 4 }}>
+                <PickerField
+                  label="Pedido a medida (opcional)"
+                  value={pedidoId}
+                  options={pedidoOptions}
+                  onChange={setPedidoId}
+                  icon="construct-outline"
+                />
+                {pedidoId !== SIN_PEDIDO && parseNumber(cantidad) > 0 ? (
+                  <Text style={styles.hint}>
+                    {material.ultimoCosto != null
+                      ? `Se sumará ${soles(parseNumber(cantidad) * material.ultimoCosto)} al costo de materiales del pedido`
+                      : 'Este material no tiene último costo: se sumará S/ 0.00 al pedido'}
+                  </Text>
+                ) : null}
+              </View>
+            )}
             <Input label="Nota (opcional)" placeholder={op === 'ingreso' ? 'N° de factura o guía' : 'Ej. ropero pedido P-0012'} value={nota} onChangeText={setNota} />
             <Button title={op === 'ingreso' ? 'Registrar ingreso' : 'Registrar consumo'} icon="checkmark" onPress={registrar} loading={saving} />
           </Card>

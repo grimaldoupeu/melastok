@@ -20,11 +20,13 @@ import {
   serverTimestamp,
   setDoc,
   terminate,
+  Timestamp,
   updateDoc,
   type Firestore,
 } from 'firebase/firestore';
 
 import { ajustarStockTx, crearItemConStockTx, ingresarMaterialTx, salidaMaterialTx } from '../src/services/inventario-core';
+import { cambiarEtapaTx, crearPedidoTx, registrarPagoTx, type NuevoPedidoInput } from '../src/services/pedidos-core';
 import { cancelarVentaTx, MAX_ITEMS_VENTA, registrarVentaTx, type NuevaVentaInput } from '../src/services/ventas-core';
 
 const PROJECT = 'demo-melastock';
@@ -406,6 +408,150 @@ async function main() {
     salidaMaterialTx(dbV, { materialId: 'm1', cantidad: 9999, nota: null }, VEND).catch((e) => {
       throw new Error(/Stock insuficiente/.test(e.message) ? 'PERMISSION_DENIED (bloqueado por la app)' : e.message);
     })
+  );
+
+  /* ---------------- Pedidos a medida (fase 5) ---------------- */
+  const pedidoBase = (extra: Partial<NuevoPedidoInput> = {}): NuevoPedidoInput => ({
+    clienteId: null,
+    clienteNombre: 'Jorge Huamán',
+    clienteTelefono: '912345678',
+    descripcion: 'Cocina a medida 2.40 m, melamina blanca',
+    medidas: '2.40 x 0.60 x 0.90',
+    materialColor: 'Blanco 18 mm',
+    notas: null,
+    precio: 2500,
+    fechaEntrega: '2099-12-31',
+    adelanto: null,
+    dia,
+    ...extra,
+  });
+  const resumenHoy = async () => (await getDoc(doc(dbA, 'resumen_diario', dia))).data()!;
+  const pedidoDoc = async (id: string) => (await getDoc(doc(dbA, 'pedidos', id))).data()!;
+  let pedidoA = '';
+  let pedidoB = '';
+
+  console.log('\nPedidos a medida permitidos:');
+  await prueba('vendedor crea pedido sin adelanto (P-0001)', 'permitir', async () => {
+    const r = await crearPedidoTx(dbV, pedidoBase(), VEND);
+    pedidoA = r.id;
+    if (r.codigo !== 'P-0001') throw new Error(`código ${r.codigo}`);
+  });
+  await prueba('vendedor crea pedido con adelanto (suma a pagosPedidos)', 'permitir', async () => {
+    const antes = (await resumenHoy()).pagosPedidosCent;
+    const r = await crearPedidoTx(dbV, pedidoBase({ precio: 1800.5, adelanto: { monto: 500.25, metodo: 'Yape', nota: null } }), VEND);
+    pedidoB = r.id;
+    const despues = (await resumenHoy()).pagosPedidosCent;
+    const p = await pedidoDoc(pedidoB);
+    if (despues - antes !== 50025) throw new Error(`resumen sumó ${despues - antes}`);
+    if (p.saldoCent !== 180050 - 50025) throw new Error(`saldo ${p.saldoCent}`);
+  });
+  await prueba('vendedor registra pago parcial (saldo y resumen)', 'permitir', async () => {
+    const antes = (await resumenHoy()).pagosPedidosCent;
+    await registrarPagoTx(dbV, { pedidoId: pedidoB, monto: 300, metodo: 'Efectivo', nota: 'Segundo pago', dia }, VEND);
+    const p = await pedidoDoc(pedidoB);
+    if (p.pagos.length !== 2 || p.pagadoCent !== 80025) throw new Error(`pagado ${p.pagadoCent}`);
+    if ((await resumenHoy()).pagosPedidosCent - antes !== 30000) throw new Error('el resumen no sumó el pago');
+  });
+  await prueba('primer pago de un pedido creado sin adelanto', 'permitir', () =>
+    registrarPagoTx(dbV, { pedidoId: pedidoA, monto: 1000, metodo: 'Plin', nota: null, dia }, VEND)
+  );
+  await prueba('venta después de pagos conserva los pagos del resumen', 'permitir', async () => {
+    const antes = await resumenHoy();
+    await registrarVentaTx(dbV, venta([{ productoId: 'p3', cantidad: 1 }]), VEND);
+    const despues = await resumenHoy();
+    if (despues.pagosPedidosCent !== antes.pagosPedidosCent) throw new Error('la venta alteró pagosPedidos');
+  });
+  await prueba('vendedor avanza etapa (cotizado → corte → enchapado)', 'permitir', async () => {
+    await cambiarEtapaTx(dbV, { pedidoId: pedidoA, etapa: 'corte', nota: null }, VEND);
+    await cambiarEtapaTx(dbV, { pedidoId: pedidoA, etapa: 'enchapado', nota: 'Tapacanto blanco' }, VEND);
+  });
+  await prueba('vendedor retrocede etapa (enchapado → corte)', 'permitir', async () => {
+    await cambiarEtapaTx(dbV, { pedidoId: pedidoA, etapa: 'corte', nota: 'Pieza mal cortada' }, VEND);
+    const p = await pedidoDoc(pedidoA);
+    if (p.historialEtapas.length !== 4) throw new Error(`historial ${p.historialEtapas.length}`);
+  });
+  await prueba('consumo de material ligado a pedido suma costoMateriales', 'permitir', async () => {
+    const m = (await getDoc(doc(dbA, 'materiales', 'm1'))).data()!;
+    await salidaMaterialTx(dbV, { materialId: 'm1', cantidad: 2.5, nota: null, pedidoId: pedidoA }, VEND);
+    const p = await pedidoDoc(pedidoA);
+    const esperado = Math.round(2.5 * m.ultimoCosto * 100);
+    if (p.costoMaterialesCent !== esperado) throw new Error(`costo ${p.costoMaterialesCent}, esperado ${esperado}`);
+  });
+  await prueba('vendedor edita descripción y fecha de entrega', 'permitir', () =>
+    updateDoc(doc(dbV, 'pedidos', pedidoA), { descripcion: 'Cocina 2.40 m con alacena', fechaEntrega: '2099-11-30', actualizadoEn: serverTimestamp() })
+  );
+  await prueba('admin cambia el precio (recalcula saldo)', 'permitir', async () => {
+    const p = await pedidoDoc(pedidoA);
+    await updateDoc(doc(dbA, 'pedidos', pedidoA), { precioCent: 260000, saldoCent: 260000 - p.pagadoCent, actualizadoEn: serverTimestamp() });
+  });
+
+  console.log('\nPedidos a medida bloqueados:');
+  await prueba('vendedor cancela un pedido', 'denegar', () => cambiarEtapaTx(dbV, { pedidoId: pedidoB, etapa: 'cancelado', nota: null }, VEND));
+  await prueba('vendedor cambia el precio', 'denegar', async () => {
+    const p = await pedidoDoc(pedidoB);
+    await updateDoc(doc(dbV, 'pedidos', pedidoB), { precioCent: 100, saldoCent: 100 - p.pagadoCent, actualizadoEn: serverTimestamp() });
+  });
+  await prueba('pago sin sumarlo al resumen del día', 'denegar', async () => {
+    const p = await pedidoDoc(pedidoB);
+    await updateDoc(doc(dbV, 'pedidos', pedidoB), {
+      pagos: [...p.pagos, { montoCent: 100, metodo: 'Yape', fecha: Timestamp.now(), dia, usuarioId: VEND.uid, usuarioNombre: VEND.nombre, nota: null }],
+      pagadoCent: p.pagadoCent + 100,
+      saldoCent: p.saldoCent - 100,
+      actualizadoEn: serverTimestamp(),
+    });
+  });
+  await prueba('inflar el resumen citando un pago antiguo', 'denegar', async () => {
+    const r = await resumenHoy();
+    await setDoc(doc(dbV, 'resumen_diario', dia), { ...r, pagosPedidosCent: r.pagosPedidosCent + 50025, ultimoPago: { pedidoId: pedidoB, indice: 0 }, actualizadoEn: serverTimestamp() });
+  });
+  await prueba('pago con saldo mal calculado', 'denegar', () =>
+    runTransaction(dbV, async (tx) => {
+      const ref = doc(dbV, 'pedidos', pedidoB);
+      const p = (await tx.get(ref)).data()!;
+      const rRef = doc(dbV, 'resumen_diario', dia);
+      const r = (await tx.get(rRef)).data()!;
+      const pagos = [...p.pagos, { montoCent: 100, metodo: 'Yape', fecha: Timestamp.now(), dia, usuarioId: VEND.uid, usuarioNombre: VEND.nombre, nota: null }];
+      tx.update(ref, { pagos, pagadoCent: p.pagadoCent + 100, saldoCent: p.saldoCent, actualizadoEn: serverTimestamp() });
+      tx.set(rRef, { ...r, pagosPedidosCent: r.pagosPedidosCent + 100, ultimoPago: { pedidoId: pedidoB, indice: p.pagos.length }, actualizadoEn: serverTimestamp() });
+    })
+  );
+  await prueba('pago fechado ayer', 'denegar', () => registrarPagoTx(dbV, { pedidoId: pedidoB, monto: 10, metodo: 'Yape', nota: null, dia: '2020-01-01' }, VEND));
+  await prueba('pago mayor al saldo se rechaza en la app', 'denegar', () =>
+    registrarPagoTx(dbV, { pedidoId: pedidoB, monto: 999999, metodo: 'Yape', nota: null, dia }, VEND).catch((e) => {
+      throw new Error(/supera el saldo/.test(e.message) ? 'PERMISSION_DENIED (bloqueado por la app)' : e.message);
+    })
+  );
+  await prueba('sumar costo de materiales sin movimiento', 'denegar', async () => {
+    const p = await pedidoDoc(pedidoB);
+    await updateDoc(doc(dbV, 'pedidos', pedidoB), { costoMaterialesCent: p.costoMaterialesCent + 5000, ultimoMovimientoId: 'no-existe', actualizadoEn: serverTimestamp() });
+  });
+  await prueba('consumo para pedido con costo falseado', 'denegar', () =>
+    runTransaction(dbV, async (tx) => {
+      const mRef = doc(dbV, 'materiales', 'm1');
+      const pRef = doc(dbV, 'pedidos', pedidoB);
+      const m = (await tx.get(mRef)).data()!;
+      const p = (await tx.get(pRef)).data()!;
+      const movRef = doc(dbV, 'movimientos', 'mov-costo-pedido');
+      tx.update(mRef, { stock: m.stock - 1, ultimoMovimientoId: movRef.id, actualizadoEn: serverTimestamp() });
+      tx.update(pRef, { costoMaterialesCent: p.costoMaterialesCent + 1, ultimoMovimientoId: movRef.id, actualizadoEn: serverTimestamp() });
+      tx.set(movRef, {
+        tipo: 'salida', itemTipo: 'material', itemId: 'm1', itemNombre: m.nombre, cantidad: 1, costoUnitario: m.ultimoCosto,
+        stockAnterior: m.stock, stockNuevo: m.stock - 1, ventaId: null, indiceItem: null, proveedorId: null,
+        proveedorNombre: null, nota: null, usuarioId: VEND.uid, usuarioNombre: VEND.nombre, fecha: serverTimestamp(),
+        pedidoId: pedidoB, costoTotalCent: 1,
+      });
+    })
+  );
+  await prueba('crear pedido sin pasar por el contador', 'denegar', async () => {
+    const p = await pedidoDoc(pedidoA);
+    await setDoc(doc(dbV, 'pedidos', 'pedido-trucho'), { ...p, codigo: 'P-9999', numero: 9999, creadoEn: serverTimestamp(), actualizadoEn: serverTimestamp() });
+  });
+  await prueba('admin cancela un pedido', 'permitir', () => cambiarEtapaTx(dbA, { pedidoId: pedidoB, etapa: 'cancelado', nota: 'Cliente desistió' }, ADMIN));
+  await prueba('modificar un pedido cancelado', 'denegar', () => cambiarEtapaTx(dbA, { pedidoId: pedidoB, etapa: 'corte', nota: null }, ADMIN).catch((e) => {
+    throw new Error(/cancelado/.test(e.message) ? 'PERMISSION_DENIED (bloqueado por la app)' : e.message);
+  }));
+  await prueba('modificar un pedido cancelado saltándose la app', 'denegar', () =>
+    updateDoc(doc(dbA, 'pedidos', pedidoB), { descripcion: 'Reabierto a la mala', actualizadoEn: serverTimestamp() })
   );
 
   console.log(`\nResultado: ${ok} OK, ${fallos} fallos\n`);

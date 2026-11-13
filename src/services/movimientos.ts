@@ -55,6 +55,12 @@ export function observarKardexProveedor(proveedorId: string, cb: Cb, onError?: (
   return onSnapshot(q, (snap) => cb(snap.docs.map(toMovimiento)), onError);
 }
 
+/** Materiales consumidos en un pedido a medida */
+export function observarConsumosPedido(pedidoId: string, cb: Cb, onError?: (e: unknown) => void, max = 50): Unsubscribe {
+  const q = query(collection(db, COL), where('pedidoId', '==', pedidoId), orderBy('fecha', 'desc'), limit(max));
+  return onSnapshot(q, (snap) => cb(snap.docs.map(toMovimiento)), onError);
+}
+
 /** Últimos movimientos de todo el inventario */
 export function observarKardexReciente(cb: Cb, onError?: (e: unknown) => void, max = 200): Unsubscribe {
   const q = query(collection(db, COL), orderBy('fecha', 'desc'), limit(max));

@@ -23,7 +23,7 @@ export function ingresarMaterial(
   return ingresarMaterialTx(db, input, usuario);
 }
 
-export function registrarConsumoMaterial(input: { materialId: string; cantidad: number; nota: string | null }, usuario: Usuario) {
+export function registrarConsumoMaterial(input: { materialId: string; cantidad: number; nota: string | null; pedidoId?: string | null }, usuario: Usuario) {
   return salidaMaterialTx(db, input, usuario);
 }
 

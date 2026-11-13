@@ -643,6 +643,7 @@ export function ConfirmDialog({
   loading,
   onConfirm,
   onCancel,
+  children,
 }: {
   visible: boolean;
   title: string;
@@ -653,6 +654,8 @@ export function ConfirmDialog({
   loading?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Contenido extra (por ejemplo, un campo de nota) */
+  children?: ReactNode;
 }) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
@@ -660,6 +663,7 @@ export function ConfirmDialog({
         <View style={[styles.card, { gap: Spacing.md }]}>
           <Text style={styles.modalTitle}>{title}</Text>
           {message ? <Text style={styles.emptyDesc}>{message}</Text> : null}
+          {children}
           <Row style={{ gap: Spacing.sm, marginTop: Spacing.sm }}>
             <Button title={cancelText} variant="ghost" onPress={onCancel} style={{ flex: 1 }} disabled={loading} />
             <Button

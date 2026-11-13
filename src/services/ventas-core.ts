@@ -206,6 +206,7 @@ export async function registrarVentaTx(db: Firestore, input: NuevaVentaInput, ve
       porMetodoCent: porMetodo,
       pagosPedidosCent: Number(previo.pagosPedidosCent ?? 0),
       ultimaVentaId: ventaRef.id,
+      ultimoPago: (previo as DocumentData).ultimoPago ?? null,
       actualizadoEn: serverTimestamp(),
     });
 
@@ -283,6 +284,7 @@ export async function cancelarVentaTx(db: Firestore, ventaId: string, admin: Usu
       porMetodoCent: porMetodo,
       pagosPedidosCent: Number(r.pagosPedidosCent ?? 0),
       ultimaVentaId: ventaId,
+      ultimoPago: r.ultimoPago ?? null,
       actualizadoEn: serverTimestamp(),
     });
   });

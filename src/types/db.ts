@@ -122,6 +122,66 @@ export type Venta = {
   canceladaPorNombre: string | null;
 };
 
+/** Etapas del taller para pedidos a medida */
+export type EtapaPedido = 'cotizado' | 'corte' | 'enchapado' | 'armado' | 'entrega' | 'entregado' | 'cancelado';
+
+/** Flujo normal (la barra de progreso). "entrega" = terminado, listo para entregar. */
+export const ETAPAS_FLUJO: EtapaPedido[] = ['cotizado', 'corte', 'enchapado', 'armado', 'entrega', 'entregado'];
+
+export const ETAPA_LABEL: Record<EtapaPedido, string> = {
+  cotizado: 'Cotizado',
+  corte: 'Corte',
+  enchapado: 'Enchapado',
+  armado: 'Armado',
+  entrega: 'Listo para entrega',
+  entregado: 'Entregado',
+  cancelado: 'Cancelado',
+};
+
+export type PagoPedido = {
+  monto: number;
+  metodo: MetodoPago;
+  fecha: Date | null;
+  dia: string;
+  usuarioId: string;
+  usuarioNombre: string;
+  nota: string | null;
+};
+
+export type HistorialEtapa = {
+  etapa: EtapaPedido;
+  fecha: Date | null;
+  usuarioId: string;
+  usuarioNombre: string;
+  nota: string | null;
+};
+
+/** Documento de la colección "pedidos" (pedidos a medida), montos en soles para la UI */
+export type Pedido = {
+  id: string;
+  numero: number;
+  codigo: string; // P-0001
+  clienteId: string | null;
+  clienteNombre: string;
+  clienteTelefono: string | null;
+  descripcion: string;
+  medidas: string | null;
+  materialColor: string | null;
+  notas: string | null;
+  precio: number;
+  pagado: number;
+  saldo: number;
+  costoMateriales: number;
+  etapa: EtapaPedido;
+  historialEtapas: HistorialEtapa[];
+  pagos: PagoPedido[];
+  fechaEntrega: string | null; // YYYY-MM-DD
+  vendedorId: string;
+  vendedorNombre: string;
+  creadoEn: Date | null;
+  actualizadoEn: Date | null;
+};
+
 /** Tipos de material del taller */
 export type TipoMaterial = 'plancha' | 'tapacanto' | 'bisagra' | 'corredera' | 'tornilleria' | 'otro';
 
