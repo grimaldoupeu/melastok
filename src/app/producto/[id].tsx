@@ -4,6 +4,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { AjusteStockModal } from '@/components/ajuste-stock-modal';
+import { KardexList } from '@/components/kardex-list';
 import { ProductImage, StockBadge } from '@/components/product-card';
 import { useToast } from '@/components/toast';
 import { Banner, Button, Card, ConfirmDialog, ErrorView, Header, Input, KeyValue, LoadingView, PickerField, Row, Screen, Stepper, Toggle } from '@/components/ui';
@@ -16,9 +18,11 @@ import { parseNumber, soles } from '@/lib/format';
 import { pickProductImage, type PickedImage } from '@/lib/image-picker';
 import { observarCategorias } from '@/services/categorias';
 import { isCloudinaryConfigured, subirImagenProducto } from '@/services/imagenes';
-import { actualizarProducto, crearProducto, eliminarProducto, observarProducto } from '@/services/productos';
+import { crearProducto } from '@/services/inventario';
+import { observarKardexItem } from '@/services/movimientos';
+import { actualizarProducto, eliminarProducto, observarProducto } from '@/services/productos';
 import { selectQuantityOf, useCart } from '@/store/cart';
-import type { Categoria, Producto } from '@/types/db';
+import type { Categoria, Movimiento, Producto } from '@/types/db';
 
 type Form = {
   nombre: string;
@@ -138,7 +142,10 @@ function ProductDetail({ producto }: { producto: Producto }) {
 function ProductEditor({ producto, categorias }: { producto: Producto | null; categorias: Categoria[] }) {
   const router = useRouter();
   const toast = useToast();
+  const { user, profile } = useAuth();
   const isNew = !producto;
+  const [showAjuste, setShowAjuste] = useState(false);
+  const kardex = useRealtime<Movimiento[]>((onData, onError) => observarKardexItem(producto!.id, onData, onError, 20), [producto?.id], !!producto);
   const [form, setForm] = useState<Form>(() => formFrom(producto));
   const [image, setImage] = useState<PickedImage | null>(null);
   const [saving, setSaving] = useState(false);
@@ -177,9 +184,10 @@ function ProductEditor({ producto, categorias }: { producto: Producto | null; ca
       };
       let productoId = producto?.id;
       if (isNew) {
-        productoId = await crearProducto({ ...base, stock });
+        if (!user || !profile) return;
+        productoId = await crearProducto(base, stock, { uid: user.uid, nombre: profile.nombre });
       } else {
-        await actualizarProducto(productoId!, { ...base, ...(stock !== producto.stock ? { stock } : {}) });
+        await actualizarProducto(productoId!, base);
       }
       if (image && productoId) {
         const fotoUrl = await subirImagenProducto(image, productoId);
@@ -246,15 +254,25 @@ function ProductEditor({ producto, categorias }: { producto: Producto | null; ca
               <Input containerStyle={{ flex: 1 }} label="Costo (S/)" placeholder="0.00" value={form.costo} onChangeText={(v) => set('costo', v)} keyboardType="decimal-pad" />
             </Row>
             <Row style={{ gap: Spacing.md, alignItems: 'flex-start' }}>
-              <Input
-                containerStyle={{ flex: 1 }}
-                label={isNew ? 'Stock inicial' : 'Stock actual'}
-                placeholder="0"
-                value={form.stock}
-                onChangeText={(v) => set('stock', v)}
-                keyboardType="number-pad"
-                hint={isNew ? undefined : 'Solo admin. Los movimientos quedarán en el kardex desde la fase de inventario.'}
-              />
+              {isNew ? (
+                <Input
+                  containerStyle={{ flex: 1 }}
+                  label="Stock inicial"
+                  placeholder="0"
+                  value={form.stock}
+                  onChangeText={(v) => set('stock', v)}
+                  keyboardType="number-pad"
+                  hint="Se registra en el kardex"
+                />
+              ) : (
+                <View style={{ flex: 1, gap: 6 }}>
+                  <Text style={styles.fieldLabel}>Stock actual</Text>
+                  <View style={styles.stockBox}>
+                    <Text style={styles.stockValue}>{producto.stock}</Text>
+                    <Button title="Ajustar" icon="create-outline" size="sm" variant="ghost" onPress={() => setShowAjuste(true)} />
+                  </View>
+                </View>
+              )}
               <Input containerStyle={{ flex: 1 }} label="Stock mínimo" placeholder="1" value={form.stockMinimo} onChangeText={(v) => set('stockMinimo', v)} keyboardType="number-pad" hint="Alerta al llegar a este número" />
             </Row>
             <Toggle label="Visible en el catálogo" description="Desactívalo para ocultarlo sin borrarlo" value={form.activo} onChange={(v) => set('activo', v)} />
@@ -262,9 +280,28 @@ function ProductEditor({ producto, categorias }: { producto: Producto | null; ca
           </Card>
 
           <Button title={isNew ? 'Crear producto' : 'Guardar cambios'} icon="save-outline" size="lg" onPress={save} loading={saving} />
+
+          {!isNew ? (
+            <Card style={{ paddingVertical: Spacing.sm }}>
+              <Text style={styles.sectionLabel}>Kardex (últimos 20)</Text>
+              {kardex.loading ? <Text style={styles.hint}>Cargando…</Text> : <KardexList movimientos={kardex.data ?? []} unidad="und" />}
+            </Card>
+          ) : null}
           {!isNew ? <Button title="Eliminar producto" icon="trash-outline" variant="ghost" onPress={() => setConfirmDelete(true)} /> : null}
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {producto ? (
+        <AjusteStockModal
+          visible={showAjuste}
+          onClose={() => setShowAjuste(false)}
+          itemTipo="producto"
+          itemId={producto.id}
+          nombre={producto.nombre}
+          stockActual={producto.stock}
+          unidad="und"
+        />
+      ) : null}
 
       <ConfirmDialog
         visible={confirmDelete}
@@ -289,4 +326,18 @@ const styles = StyleSheet.create({
   desc: { fontSize: FontSize.sm, color: Colors.textSecondary, lineHeight: 20 },
   price: { fontSize: FontSize.xxl, fontWeight: '900', color: Colors.primary },
   label: { fontSize: FontSize.md, fontWeight: '700', color: Colors.text },
+  fieldLabel: { fontSize: FontSize.sm, fontWeight: '700', color: Colors.textSecondary },
+  stockBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    borderRadius: Radius.md,
+    paddingLeft: Spacing.md,
+    minHeight: 48,
+    backgroundColor: Colors.cardAlt,
+  },
+  stockValue: { fontSize: FontSize.lg, fontWeight: '800', color: Colors.text },
+  sectionLabel: { fontSize: FontSize.sm, fontWeight: '800', color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 },
 });

@@ -122,6 +122,70 @@ export type Venta = {
   canceladaPorNombre: string | null;
 };
 
+/** Tipos de material del taller */
+export type TipoMaterial = 'plancha' | 'tapacanto' | 'bisagra' | 'corredera' | 'tornilleria' | 'otro';
+
+export const TIPOS_MATERIAL: { value: TipoMaterial; label: string; icon: string }[] = [
+  { value: 'plancha', label: 'Planchas', icon: 'layers-outline' },
+  { value: 'tapacanto', label: 'Tapacanto', icon: 'remove-outline' },
+  { value: 'bisagra', label: 'Bisagras', icon: 'git-compare-outline' },
+  { value: 'corredera', label: 'Correderas', icon: 'swap-horizontal-outline' },
+  { value: 'tornilleria', label: 'Tornillería', icon: 'settings-outline' },
+  { value: 'otro', label: 'Otros', icon: 'ellipsis-horizontal-outline' },
+];
+
+export const UNIDADES_MATERIAL = ['und', 'plancha', 'metro', 'caja', 'par', 'kg', 'rollo'];
+
+/** Documento de la colección "materiales" */
+export type Material = {
+  id: string;
+  nombre: string;
+  tipo: TipoMaterial;
+  color: string | null;
+  espesorMm: number | null;
+  unidad: string;
+  stock: number;
+  stockMinimo: number;
+  ultimoCosto: number | null;
+  proveedorId: string | null;
+  proveedorNombre: string | null; // desnormalizado
+  actualizadoEn: Date | null;
+};
+
+/** Documento de la colección "proveedores" */
+export type Proveedor = {
+  id: string;
+  nombre: string;
+  telefono: string | null;
+  contacto: string | null;
+  direccion: string | null;
+  notas: string | null;
+};
+
+export type TipoMovimiento = 'entrada' | 'salida' | 'ajuste';
+export type ItemTipo = 'producto' | 'material';
+
+/** Documento de la colección "movimientos" (kardex). Inmutable. */
+export type Movimiento = {
+  id: string;
+  tipo: TipoMovimiento;
+  itemTipo: ItemTipo;
+  itemId: string;
+  itemNombre: string;
+  /** entrada/salida: cantidad positiva; ajuste: diferencia (stockNuevo - stockAnterior) */
+  cantidad: number;
+  costoUnitario: number | null;
+  stockAnterior: number;
+  stockNuevo: number;
+  ventaId: string | null;
+  proveedorId: string | null;
+  proveedorNombre: string | null;
+  nota: string | null;
+  usuarioId: string;
+  usuarioNombre: string;
+  fecha: Date | null;
+};
+
 /* ------------------------------------------------------------------ */
 /* Supabase (en migración; se eliminará en la fase 7)                  */
 /* ------------------------------------------------------------------ */
@@ -147,46 +211,6 @@ export type Product = {
   created_at: string;
   updated_at: string;
   categories?: Pick<Category, 'id' | 'name' | 'icon'> | null;
-};
-
-export type MaterialType = 'plancha' | 'tapacanto' | 'bisagra' | 'corredera' | 'tornilleria' | 'otro';
-
-export const MATERIAL_TYPES: { value: MaterialType; label: string; icon: string }[] = [
-  { value: 'plancha', label: 'Planchas', icon: 'layers-outline' },
-  { value: 'tapacanto', label: 'Tapacanto', icon: 'remove-outline' },
-  { value: 'bisagra', label: 'Bisagras', icon: 'git-compare-outline' },
-  { value: 'corredera', label: 'Correderas', icon: 'swap-horizontal-outline' },
-  { value: 'tornilleria', label: 'Tornillería', icon: 'settings-outline' },
-  { value: 'otro', label: 'Otros', icon: 'ellipsis-horizontal-outline' },
-];
-
-export const MATERIAL_UNITS = ['und', 'plancha', 'metro', 'caja', 'par', 'kg', 'rollo'];
-
-export type Material = {
-  id: string;
-  name: string;
-  type: MaterialType;
-  color: string | null;
-  thickness_mm: number | null;
-  unit: string;
-  stock: number;
-  min_stock: number;
-  unit_cost: number | null;
-  supplier: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export type MovementType = 'entrada' | 'salida' | 'ajuste';
-
-export type MaterialMovement = {
-  id: string;
-  material_id: string;
-  type: MovementType;
-  quantity: number;
-  note: string | null;
-  user_id: string | null;
-  created_at: string;
 };
 
 export type Customer = {

@@ -50,6 +50,8 @@ function RootNavigator() {
         <Stack.Screen name="perfil" options={{ presentation: 'modal' }} />
         <Stack.Screen name="usuarios" />
         <Stack.Screen name="categorias" />
+        <Stack.Screen name="proveedor/[id]" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="kardex" />
       </Stack.Protected>
     </Stack>
   );

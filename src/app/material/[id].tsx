@@ -1,70 +1,33 @@
-import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { AjusteStockModal } from '@/components/ajuste-stock-modal';
+import { KardexList } from '@/components/kardex-list';
 import { useToast } from '@/components/toast';
-import { Banner, Button, Card, Chip, ConfirmDialog, Divider, ErrorView, Header, Input, LoadingView, PickerField, Row, Screen, SectionTitle } from '@/components/ui';
+import { Banner, Button, Card, Chip, ConfirmDialog, EmptyState, ErrorView, Header, Input, LoadingView, PickerField, Row, Screen, SectionTitle } from '@/components/ui';
 import { Colors, FontSize, Spacing } from '@/constants/theme';
 import { useAuth } from '@/hooks/use-auth';
-import { useQuery } from '@/hooks/use-query';
-import { formatDateTime, parseNumber, qty, soles } from '@/lib/format';
-import { errorMessage, supabase } from '@/lib/supabase';
-import { MATERIAL_TYPES, MATERIAL_UNITS, type Material, type MaterialMovement, type MaterialType, type MovementType } from '@/types/db';
+import { useRealtime } from '@/hooks/use-realtime';
+import { firebaseErrorMessage } from '@/lib/firebase';
+import { parseNumber, qty, soles } from '@/lib/format';
+import { crearMaterial, ingresarMaterial, registrarConsumoMaterial } from '@/services/inventario';
+import { actualizarMaterial, eliminarMaterial, observarMaterial, type MaterialInput } from '@/services/materiales';
+import { observarKardexItem } from '@/services/movimientos';
+import { observarProveedores } from '@/services/proveedores';
+import { TIPOS_MATERIAL, UNIDADES_MATERIAL, type Material, type Movimiento, type Proveedor, type TipoMaterial } from '@/types/db';
 
-type Form = {
-  name: string;
-  type: MaterialType;
-  color: string;
-  thickness_mm: string;
-  unit: string;
-  stock: string;
-  min_stock: string;
-  unit_cost: string;
-  supplier: string;
-};
-
-function formFrom(m: Material | null): Form {
-  if (!m) return { name: '', type: 'plancha', color: '', thickness_mm: '', unit: 'plancha', stock: '0', min_stock: '0', unit_cost: '', supplier: '' };
-  return {
-    name: m.name,
-    type: m.type,
-    color: m.color ?? '',
-    thickness_mm: m.thickness_mm != null ? String(m.thickness_mm) : '',
-    unit: m.unit,
-    stock: String(m.stock),
-    min_stock: String(m.min_stock),
-    unit_cost: m.unit_cost != null ? String(m.unit_cost) : '',
-    supplier: m.supplier ?? '',
-  };
-}
-
-const MOVEMENTS: { value: MovementType; label: string; icon: 'arrow-down-circle-outline' | 'arrow-up-circle-outline' | 'create-outline'; color: string }[] = [
-  { value: 'entrada', label: 'Entrada', icon: 'arrow-down-circle-outline', color: Colors.success },
-  { value: 'salida', label: 'Salida', icon: 'arrow-up-circle-outline', color: Colors.danger },
-  { value: 'ajuste', label: 'Ajuste', icon: 'create-outline', color: Colors.info },
-];
+const SIN_PROVEEDOR = '__ninguno__';
 
 export default function MaterialScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const isNew = id === 'nuevo';
   const [editing, setEditing] = useState(false);
 
-  const { data, loading, error, refetch } = useQuery(
-    async () => {
-      if (isNew) return { material: null as Material | null, movements: [] as MaterialMovement[] };
-      const [m, mv] = await Promise.all([
-        supabase.from('materials').select('*').eq('id', id).single(),
-        supabase.from('material_movements').select('*').eq('material_id', id).order('created_at', { ascending: false }).limit(10),
-      ]);
-      if (m.error) throw m.error;
-      return { material: m.data as Material, movements: (mv.data ?? []) as MaterialMovement[] };
-    },
-    [id],
-    { refetchOnFocus: false }
-  );
+  const material = useRealtime<Material | null>((onData, onError) => observarMaterial(id, onData, onError), [id], !isNew);
+  const proveedores = useRealtime(observarProveedores);
 
-  if (loading && !data) {
+  if (!isNew && material.loading) {
     return (
       <Screen edges={['top', 'bottom']}>
         <Header title="Material" back />
@@ -72,154 +35,178 @@ export default function MaterialScreen() {
       </Screen>
     );
   }
-  if (error || !data || (!isNew && !data.material)) {
+  if (!isNew && (material.error || !material.data)) {
     return (
       <Screen edges={['top', 'bottom']}>
         <Header title="Material" back />
-        <ErrorView message={error ?? 'Material no encontrado'} onRetry={refetch} />
+        <ErrorView message={material.error ?? 'Material no encontrado'} />
       </Screen>
     );
   }
   if (isNew || editing) {
     return (
       <MaterialEditor
-        key={data.material?.id ?? 'nuevo'}
-        material={data.material}
+        key={material.data?.id ?? 'nuevo'}
+        material={isNew ? null : material.data}
+        proveedores={proveedores.data ?? []}
         onCancel={isNew ? undefined : () => setEditing(false)}
-        onSaved={() => {
-          setEditing(false);
-          refetch();
-        }}
+        onSaved={() => setEditing(false)}
       />
     );
   }
-  return <MaterialDetail material={data.material!} movements={data.movements} onEdit={() => setEditing(true)} onChanged={refetch} />;
+  return <MaterialDetail material={material.data!} proveedores={proveedores.data ?? []} onEdit={() => setEditing(true)} />;
 }
 
 /* ------------------------------------------------------------------ */
-/* Detalle + movimientos                                               */
+/* Detalle: ingreso, consumo, ajuste y kardex                          */
 /* ------------------------------------------------------------------ */
 
-function MaterialDetail({ material, movements, onEdit, onChanged }: { material: Material; movements: MaterialMovement[]; onEdit: () => void; onChanged: () => void }) {
+type Operacion = 'ingreso' | 'consumo';
+
+function MaterialDetail({ material, proveedores, onEdit }: { material: Material; proveedores: Proveedor[]; onEdit: () => void }) {
   const toast = useToast();
-  const { isAdmin } = useAuth();
-  const [movType, setMovType] = useState<MovementType>('entrada');
-  const [movQty, setMovQty] = useState('');
-  const [movNote, setMovNote] = useState('');
-  const [moving, setMoving] = useState(false);
+  const { isAdmin, user, profile } = useAuth();
+  const [op, setOp] = useState<Operacion>('ingreso');
+  const [cantidad, setCantidad] = useState('');
+  const [costo, setCosto] = useState(material.ultimoCosto != null ? String(material.ultimoCosto) : '');
+  const [proveedorId, setProveedorId] = useState<string>(material.proveedorId ?? SIN_PROVEEDOR);
+  const [nota, setNota] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [showAjuste, setShowAjuste] = useState(false);
 
-  const low = Number(material.stock) <= Number(material.min_stock);
-  const out = Number(material.stock) <= 0;
-  const typeInfo = MATERIAL_TYPES.find((t) => t.value === material.type);
+  const kardex = useRealtime<Movimiento[]>((onData, onError) => observarKardexItem(material.id, onData, onError, 30), [material.id]);
 
-  const registerMovement = async () => {
-    const q = parseNumber(movQty);
-    if (q <= 0 && movType !== 'ajuste') return toast.show('Ingresa una cantidad mayor a 0', 'error');
-    if (q < 0) return toast.show('La cantidad no puede ser negativa', 'error');
-    setMoving(true);
-    const { error: err } = await supabase.rpc('adjust_material_stock', { p_material_id: material.id, p_type: movType, p_quantity: q, p_note: movNote.trim() || null });
-    setMoving(false);
-    if (err) return toast.show(errorMessage(err), 'error');
-    toast.show(movType === 'entrada' ? 'Entrada registrada' : movType === 'salida' ? 'Salida registrada' : 'Stock ajustado', 'success');
-    setMovQty('');
-    setMovNote('');
-    onChanged();
+  const low = material.stock <= material.stockMinimo;
+  const out = material.stock <= 0;
+  const tipo = TIPOS_MATERIAL.find((t) => t.value === material.tipo);
+
+  const registrar = async () => {
+    if (!user || !profile) return;
+    const n = parseNumber(cantidad);
+    if (!(n > 0)) return toast.show('Ingresa una cantidad mayor a 0', 'error');
+    const usuario = { uid: user.uid, nombre: profile.nombre };
+    setSaving(true);
+    try {
+      if (op === 'ingreso') {
+        const prov = proveedores.find((p) => p.id === proveedorId) ?? null;
+        await ingresarMaterial(
+          {
+            materialId: material.id,
+            cantidad: n,
+            costoUnitario: costo.trim() ? parseNumber(costo) : null,
+            proveedor: prov ? { id: prov.id, nombre: prov.nombre } : null,
+            nota: nota.trim() || null,
+          },
+          usuario
+        );
+        toast.show(`Ingreso de ${qty(n)} ${material.unidad} registrado`, 'success');
+      } else {
+        await registrarConsumoMaterial({ materialId: material.id, cantidad: n, nota: nota.trim() || null }, usuario);
+        toast.show(`Consumo de ${qty(n)} ${material.unidad} registrado`, 'success');
+      }
+      setCantidad('');
+      setNota('');
+    } catch (e) {
+      toast.show(firebaseErrorMessage(e), 'error');
+    } finally {
+      setSaving(false);
+    }
   };
+
+  const proveedorOptions = [{ value: SIN_PROVEEDOR, label: 'Sin proveedor' }, ...proveedores.map((p) => ({ value: p.id, label: p.nombre }))];
+  const total = parseNumber(cantidad) * parseNumber(costo);
 
   return (
     <Screen edges={['top', 'bottom']}>
-      <Header
-        title={material.name}
-        subtitle={[typeInfo?.label, material.color, material.thickness_mm ? `${qty(material.thickness_mm)} mm` : null].filter(Boolean).join(' · ')}
-        back
-      />
+      <Header title={material.nombre} subtitle={[tipo?.label, material.color, material.espesorMm ? `${qty(material.espesorMm)} mm` : null].filter(Boolean).join(' · ')} back />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           {low ? (
             <Banner
               tone={out ? 'danger' : 'warning'}
               icon="alert-circle"
-              text={out ? 'Material agotado. Registra una entrada para reponer.' : `Stock por debajo del mínimo (${qty(material.min_stock)} ${material.unit}).`}
+              text={out ? 'Material agotado. Registra un ingreso para reponer.' : `Stock por debajo del mínimo (${qty(material.stockMinimo)} ${material.unidad}).`}
             />
           ) : null}
 
           <Card style={{ alignItems: 'center', gap: 4 }}>
             <Text style={styles.stockLabel}>Stock actual</Text>
             <Text style={[styles.stock, low && { color: out ? Colors.danger : Colors.warning }]}>
-              {qty(material.stock)} <Text style={styles.unit}>{material.unit}</Text>
+              {qty(material.stock)} <Text style={styles.unit}>{material.unidad}</Text>
             </Text>
             <Row style={{ gap: Spacing.lg, marginTop: Spacing.sm, flexWrap: 'wrap', justifyContent: 'center' }}>
               <View style={{ alignItems: 'center' }}>
                 <Text style={styles.metaLabel}>Mínimo</Text>
                 <Text style={styles.metaValue}>
-                  {qty(material.min_stock)} {material.unit}
+                  {qty(material.stockMinimo)} {material.unidad}
                 </Text>
               </View>
-              {material.unit_cost != null ? (
-                <View style={{ alignItems: 'center' }}>
-                  <Text style={styles.metaLabel}>Costo unit.</Text>
-                  <Text style={styles.metaValue}>{soles(material.unit_cost)}</Text>
-                </View>
-              ) : null}
-              {material.supplier ? (
+              <View style={{ alignItems: 'center' }}>
+                <Text style={styles.metaLabel}>Último costo</Text>
+                <Text style={styles.metaValue}>{material.ultimoCosto != null ? soles(material.ultimoCosto) : '—'}</Text>
+              </View>
+              {material.proveedorNombre ? (
                 <View style={{ alignItems: 'center' }}>
                   <Text style={styles.metaLabel}>Proveedor</Text>
-                  <Text style={styles.metaValue}>{material.supplier}</Text>
+                  <Text style={styles.metaValue}>{material.proveedorNombre}</Text>
                 </View>
               ) : null}
             </Row>
-            {isAdmin ? <Button title="Editar datos" icon="pencil-outline" variant="ghost" size="sm" onPress={onEdit} /> : null}
+            {isAdmin ? (
+              <Row style={{ gap: Spacing.sm, marginTop: Spacing.sm }}>
+                <Button title="Ajustar stock" icon="create-outline" variant="secondary" size="sm" onPress={() => setShowAjuste(true)} />
+                <Button title="Editar datos" icon="pencil-outline" variant="ghost" size="sm" onPress={onEdit} />
+              </Row>
+            ) : null}
           </Card>
 
           <SectionTitle title="Registrar movimiento" />
           <Card style={{ gap: Spacing.md }}>
             <Row style={{ gap: Spacing.sm }}>
-              {MOVEMENTS.map((m) => (
-                <Chip key={m.value} label={m.label} icon={m.icon} color={m.color} active={movType === m.value} onPress={() => setMovType(m.value)} style={{ flex: 1, justifyContent: 'center' }} />
-              ))}
+              <Chip label="Ingreso" icon="arrow-down-circle-outline" color={Colors.success} active={op === 'ingreso'} onPress={() => setOp('ingreso')} style={{ flex: 1, justifyContent: 'center' }} />
+              <Chip label="Consumo" icon="arrow-up-circle-outline" color={Colors.danger} active={op === 'consumo'} onPress={() => setOp('consumo')} style={{ flex: 1, justifyContent: 'center' }} />
             </Row>
             <Input
-              label={movType === 'ajuste' ? `Nuevo stock (${material.unit})` : `Cantidad (${material.unit})`}
+              label={`Cantidad (${material.unidad})`}
               placeholder="0"
-              value={movQty}
-              onChangeText={setMovQty}
+              value={cantidad}
+              onChangeText={setCantidad}
               keyboardType="decimal-pad"
-              hint={movType === 'entrada' ? 'Compra o reposición de material' : movType === 'salida' ? 'Consumo en producción, merma o venta' : 'Corrige el stock al valor real del conteo'}
+              hint={op === 'ingreso' ? 'Compra o reposición de material' : 'Uso en producción (corte, armado, merma de taller)'}
             />
-            <Input label="Nota (opcional)" placeholder="Ej. compra a proveedor, uso en ropero #12" value={movNote} onChangeText={setMovNote} />
-            <Button title="Registrar" icon="checkmark" onPress={registerMovement} loading={moving} />
+            {op === 'ingreso' ? (
+              <>
+                <Input
+                  label="Costo unitario (S/)"
+                  placeholder="0.00"
+                  value={costo}
+                  onChangeText={setCosto}
+                  keyboardType="decimal-pad"
+                  hint={parseNumber(cantidad) > 0 && parseNumber(costo) > 0 ? `Total de la compra: ${soles(total)}` : 'Actualiza el último costo del material'}
+                />
+                <PickerField label="Proveedor" value={proveedorId} options={proveedorOptions} onChange={setProveedorId} icon="business-outline" />
+              </>
+            ) : null}
+            <Input label="Nota (opcional)" placeholder={op === 'ingreso' ? 'N° de factura o guía' : 'Ej. ropero pedido P-0012'} value={nota} onChangeText={setNota} />
+            <Button title={op === 'ingreso' ? 'Registrar ingreso' : 'Registrar consumo'} icon="checkmark" onPress={registrar} loading={saving} />
           </Card>
 
-          <SectionTitle title="Últimos movimientos" />
+          <SectionTitle title="Kardex" />
           <Card style={{ paddingVertical: Spacing.sm }}>
-            {movements.length === 0 ? (
-              <Text style={styles.empty}>Sin movimientos registrados</Text>
-            ) : (
-              movements.map((mv, i) => {
-                const info = MOVEMENTS.find((m) => m.value === mv.type) ?? MOVEMENTS[2];
-                return (
-                  <View key={mv.id}>
-                    <Row style={{ gap: Spacing.md, paddingVertical: 8 }}>
-                      <Ionicons name={info.icon} size={22} color={info.color} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.mvTitle}>
-                          {info.label} · {mv.type === 'ajuste' ? '=' : mv.type === 'entrada' ? '+' : '-'}
-                          {qty(mv.quantity)} {material.unit}
-                        </Text>
-                        <Text style={styles.mvMeta}>
-                          {formatDateTime(mv.created_at)}
-                          {mv.note ? ` · ${mv.note}` : ''}
-                        </Text>
-                      </View>
-                    </Row>
-                    {i < movements.length - 1 ? <Divider style={{ marginVertical: 0 }} /> : null}
-                  </View>
-                );
-              })
-            )}
+            {kardex.loading ? <Text style={styles.metaLabel}>Cargando…</Text> : <KardexList movimientos={kardex.data ?? []} unidad={material.unidad} />}
           </Card>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <AjusteStockModal
+        visible={showAjuste}
+        onClose={() => setShowAjuste(false)}
+        itemTipo="material"
+        itemId={material.id}
+        nombre={material.nombre}
+        stockActual={material.stock}
+        unidad={material.unidad}
+      />
     </Screen>
   );
 }
@@ -228,9 +215,47 @@ function MaterialDetail({ material, movements, onEdit, onChanged }: { material: 
 /* Editor (admin)                                                      */
 /* ------------------------------------------------------------------ */
 
-function MaterialEditor({ material, onCancel, onSaved }: { material: Material | null; onCancel?: () => void; onSaved: () => void }) {
+type Form = {
+  nombre: string;
+  tipo: TipoMaterial;
+  color: string;
+  espesorMm: string;
+  unidad: string;
+  stock: string;
+  stockMinimo: string;
+  ultimoCosto: string;
+  proveedorId: string;
+};
+
+function formFrom(m: Material | null): Form {
+  if (!m) return { nombre: '', tipo: 'plancha', color: '', espesorMm: '', unidad: 'plancha', stock: '0', stockMinimo: '0', ultimoCosto: '', proveedorId: SIN_PROVEEDOR };
+  return {
+    nombre: m.nombre,
+    tipo: m.tipo,
+    color: m.color ?? '',
+    espesorMm: m.espesorMm != null ? String(m.espesorMm) : '',
+    unidad: m.unidad,
+    stock: String(m.stock),
+    stockMinimo: String(m.stockMinimo),
+    ultimoCosto: m.ultimoCosto != null ? String(m.ultimoCosto) : '',
+    proveedorId: m.proveedorId ?? SIN_PROVEEDOR,
+  };
+}
+
+function MaterialEditor({
+  material,
+  proveedores,
+  onCancel,
+  onSaved,
+}: {
+  material: Material | null;
+  proveedores: Proveedor[];
+  onCancel?: () => void;
+  onSaved: () => void;
+}) {
   const router = useRouter();
   const toast = useToast();
+  const { isAdmin, user, profile } = useAuth();
   const isNew = !material;
   const [form, setForm] = useState<Form>(() => formFrom(material));
   const [saving, setSaving] = useState(false);
@@ -238,34 +263,43 @@ function MaterialEditor({ material, onCancel, onSaved }: { material: Material | 
 
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
 
+  if (!isAdmin) {
+    return (
+      <Screen edges={['top', 'bottom']}>
+        <Header title="Material" back />
+        <EmptyState icon="lock-closed-outline" title="Solo para administradores" action="Volver" onAction={() => router.back()} />
+      </Screen>
+    );
+  }
+
   const save = async () => {
-    if (form.name.trim().length < 2) return toast.show('Ingresa el nombre del material', 'error');
+    if (form.nombre.trim().length < 2) return toast.show('Ingresa el nombre del material', 'error');
+    if (!user || !profile) return;
+    const prov = proveedores.find((p) => p.id === form.proveedorId) ?? null;
+    const datos: MaterialInput = {
+      nombre: form.nombre.trim(),
+      tipo: form.tipo,
+      color: form.color.trim() || null,
+      espesorMm: form.espesorMm ? parseNumber(form.espesorMm) : null,
+      unidad: form.unidad,
+      stockMinimo: Math.max(0, parseNumber(form.stockMinimo)),
+      ultimoCosto: form.ultimoCosto ? parseNumber(form.ultimoCosto) : null,
+      proveedorId: prov?.id ?? null,
+      proveedorNombre: prov?.nombre ?? null,
+    };
     setSaving(true);
     try {
-      const payload = {
-        name: form.name.trim(),
-        type: form.type,
-        color: form.color.trim() || null,
-        thickness_mm: form.thickness_mm ? parseNumber(form.thickness_mm) : null,
-        unit: form.unit,
-        min_stock: Math.max(0, parseNumber(form.min_stock)),
-        unit_cost: form.unit_cost ? parseNumber(form.unit_cost) : null,
-        supplier: form.supplier.trim() || null,
-        ...(isNew ? { stock: Math.max(0, parseNumber(form.stock)) } : {}),
-      };
       if (isNew) {
-        const { error: err } = await supabase.from('materials').insert(payload);
-        if (err) throw err;
+        await crearMaterial(datos, parseNumber(form.stock), { uid: user.uid, nombre: profile.nombre });
         toast.show('Material creado', 'success');
         router.back();
       } else {
-        const { error: err } = await supabase.from('materials').update(payload).eq('id', material.id);
-        if (err) throw err;
+        await actualizarMaterial(material.id, datos);
         toast.show('Material actualizado', 'success');
         onSaved();
       }
     } catch (e) {
-      toast.show(errorMessage(e), 'error');
+      toast.show(firebaseErrorMessage(e), 'error');
     } finally {
       setSaving(false);
     }
@@ -274,16 +308,21 @@ function MaterialEditor({ material, onCancel, onSaved }: { material: Material | 
   const remove = async () => {
     if (!material) return;
     setSaving(true);
-    const { error: err } = await supabase.from('materials').delete().eq('id', material.id);
-    setSaving(false);
-    setConfirmDelete(false);
-    if (err) return toast.show(errorMessage(err), 'error');
-    toast.show('Material eliminado', 'success');
-    router.back();
+    try {
+      await eliminarMaterial(material.id);
+      toast.show('Material eliminado', 'success');
+      setConfirmDelete(false);
+      router.back();
+    } catch (e) {
+      toast.show(firebaseErrorMessage(e), 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const typeOptions = MATERIAL_TYPES.map((t) => ({ value: t.value, label: t.label, icon: t.icon as never }));
-  const unitOptions = MATERIAL_UNITS.map((u) => ({ value: u, label: u }));
+  const typeOptions = TIPOS_MATERIAL.map((t) => ({ value: t.value, label: t.label, icon: t.icon as never }));
+  const unitOptions = UNIDADES_MATERIAL.map((u) => ({ value: u, label: u }));
+  const proveedorOptions = [{ value: SIN_PROVEEDOR, label: 'Sin proveedor' }, ...proveedores.map((p) => ({ value: p.id, label: p.nombre }))];
 
   return (
     <Screen edges={['top', 'bottom']}>
@@ -291,23 +330,30 @@ function MaterialEditor({ material, onCancel, onSaved }: { material: Material | 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <Card style={{ gap: Spacing.md }}>
-            <Input label="Nombre" placeholder="Plancha melamina Nogal 18 mm" value={form.name} onChangeText={(v) => set('name', v)} />
-            <PickerField label="Tipo" value={form.type} options={typeOptions} onChange={(v) => set('type', v)} icon="layers-outline" />
+            <Input label="Nombre" placeholder="Plancha melamina Nogal 18 mm" value={form.nombre} onChangeText={(v) => set('nombre', v)} />
+            <PickerField label="Tipo" value={form.tipo} options={typeOptions} onChange={(v) => set('tipo', v)} icon="layers-outline" />
             <Row style={{ gap: Spacing.md }}>
               <Input containerStyle={{ flex: 1 }} label="Color" placeholder="Nogal" value={form.color} onChangeText={(v) => set('color', v)} />
-              <Input containerStyle={{ flex: 1 }} label="Espesor (mm)" placeholder="18" value={form.thickness_mm} onChangeText={(v) => set('thickness_mm', v)} keyboardType="decimal-pad" />
-            </Row>
-            <Row style={{ gap: Spacing.md }}>
-              <View style={{ flex: 1 }}>
-                <PickerField label="Unidad" value={form.unit} options={unitOptions} onChange={(v) => set('unit', v)} />
-              </View>
-              {isNew ? <Input containerStyle={{ flex: 1 }} label="Stock inicial" placeholder="0" value={form.stock} onChangeText={(v) => set('stock', v)} keyboardType="decimal-pad" /> : null}
+              <Input containerStyle={{ flex: 1 }} label="Espesor (mm)" placeholder="18" value={form.espesorMm} onChangeText={(v) => set('espesorMm', v)} keyboardType="decimal-pad" />
             </Row>
             <Row style={{ gap: Spacing.md, alignItems: 'flex-start' }}>
-              <Input containerStyle={{ flex: 1 }} label="Stock mínimo" placeholder="0" value={form.min_stock} onChangeText={(v) => set('min_stock', v)} keyboardType="decimal-pad" hint="Alerta al llegar a este nivel" />
-              <Input containerStyle={{ flex: 1 }} label="Costo unitario (S/)" placeholder="0.00" value={form.unit_cost} onChangeText={(v) => set('unit_cost', v)} keyboardType="decimal-pad" />
+              <View style={{ flex: 1 }}>
+                <PickerField label="Unidad" value={form.unidad} options={unitOptions} onChange={(v) => set('unidad', v)} />
+              </View>
+              {isNew ? (
+                <Input containerStyle={{ flex: 1 }} label="Stock inicial" placeholder="0" value={form.stock} onChangeText={(v) => set('stock', v)} keyboardType="decimal-pad" hint="Se registra en el kardex" />
+              ) : (
+                <View style={{ flex: 1, gap: 6 }}>
+                  <Text style={styles.fieldLabel}>Stock</Text>
+                  <Text style={styles.hint}>Se cambia con ingresos, consumos o “Ajustar stock”.</Text>
+                </View>
+              )}
             </Row>
-            <Input label="Proveedor" placeholder="Maderas del Sur" value={form.supplier} onChangeText={(v) => set('supplier', v)} />
+            <Row style={{ gap: Spacing.md, alignItems: 'flex-start' }}>
+              <Input containerStyle={{ flex: 1 }} label="Stock mínimo" placeholder="0" value={form.stockMinimo} onChangeText={(v) => set('stockMinimo', v)} keyboardType="decimal-pad" hint="Alerta al llegar a este nivel" />
+              <Input containerStyle={{ flex: 1 }} label="Último costo (S/)" placeholder="0.00" value={form.ultimoCosto} onChangeText={(v) => set('ultimoCosto', v)} keyboardType="decimal-pad" />
+            </Row>
+            <PickerField label="Proveedor habitual" value={form.proveedorId} options={proveedorOptions} onChange={(v) => set('proveedorId', v)} icon="business-outline" />
           </Card>
           <Button title={isNew ? 'Crear material' : 'Guardar cambios'} icon="save-outline" size="lg" onPress={save} loading={saving} />
           {!isNew ? <Button title="Eliminar material" icon="trash-outline" variant="ghost" onPress={() => setConfirmDelete(true)} /> : null}
@@ -317,7 +363,7 @@ function MaterialEditor({ material, onCancel, onSaved }: { material: Material | 
       <ConfirmDialog
         visible={confirmDelete}
         title="¿Eliminar este material?"
-        message="Se borrará junto con su historial de movimientos."
+        message="Su historial en el kardex se conserva, pero el material dejará de aparecer en el inventario."
         confirmText="Eliminar"
         danger
         loading={saving}
@@ -335,7 +381,6 @@ const styles = StyleSheet.create({
   unit: { fontSize: FontSize.md, fontWeight: '700', color: Colors.textMuted },
   metaLabel: { fontSize: FontSize.xs, color: Colors.textMuted },
   metaValue: { fontSize: FontSize.sm, fontWeight: '700', color: Colors.text },
-  empty: { color: Colors.textMuted, fontSize: FontSize.sm, textAlign: 'center', paddingVertical: Spacing.md },
-  mvTitle: { fontSize: FontSize.sm, fontWeight: '700', color: Colors.text },
-  mvMeta: { fontSize: FontSize.xs, color: Colors.textMuted, marginTop: 2 },
+  fieldLabel: { fontSize: FontSize.sm, fontWeight: '700', color: Colors.textSecondary },
+  hint: { fontSize: FontSize.xs, color: Colors.textMuted },
 });

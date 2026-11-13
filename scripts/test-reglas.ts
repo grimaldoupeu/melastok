@@ -4,7 +4,7 @@
  *   npm run test:reglas
  *
  * (equivale a: firebase emulators:exec --project demo-melastock --only firestore
- *  "npx tsx scripts/test-reglas-ventas.ts"). Requiere Java 11+ en el PATH.
+ *  "npx tsx scripts/test-reglas.ts"). Requiere Java 11+ en el PATH.
  *
  * Usa la misma registrarVentaTx/cancelarVentaTx que la app y además intenta
  * los atajos que las reglas deben bloquear (bajar stock sin vender, inflar el
@@ -24,6 +24,7 @@ import {
   type Firestore,
 } from 'firebase/firestore';
 
+import { ajustarStockTx, crearItemConStockTx, ingresarMaterialTx, salidaMaterialTx } from '../src/services/inventario-core';
 import { cancelarVentaTx, MAX_ITEMS_VENTA, registrarVentaTx, type NuevaVentaInput } from '../src/services/ventas-core';
 
 const PROJECT = 'demo-melastock';
@@ -122,6 +123,31 @@ async function sembrar() {
       activo: true,
     });
   }
+  await semilla('materiales/m1', {
+    nombre: 'Plancha melamina Nogal 18 mm',
+    tipo: 'plancha',
+    color: 'Nogal',
+    espesorMm: 18,
+    unidad: 'plancha',
+    stock: 10,
+    stockMinimo: 4,
+    ultimoCosto: 185,
+    proveedorId: null,
+    proveedorNombre: null,
+  });
+  await semilla('materiales/m2', {
+    nombre: 'Tapacanto Blanco 22 mm',
+    tipo: 'tapacanto',
+    color: 'Blanco',
+    espesorMm: 22,
+    unidad: 'metro',
+    stock: 100.3,
+    stockMinimo: 50,
+    ultimoCosto: 0.45,
+    proveedorId: null,
+    proveedorNombre: null,
+  });
+  await semilla('proveedores/prov1', { nombre: 'Maderas del Sur', telefono: '987111222', contacto: null, direccion: null, notas: null });
 }
 
 function venta(items: { productoId: string; cantidad: number }[], extra: Partial<NuevaVentaInput> = {}): NuevaVentaInput {
@@ -259,6 +285,125 @@ async function main() {
   }));
   await prueba('stock insuficiente se rechaza en la app', 'denegar', () =>
     registrarVentaTx(dbV, venta([{ productoId: 'p8', cantidad: 999 }]), VEND).catch((e) => {
+      throw new Error(/Stock insuficiente/.test(e.message) ? 'PERMISSION_DENIED (bloqueado por la app)' : e.message);
+    })
+  );
+
+  /* ---------------- Inventario (fase 4) ---------------- */
+  const prov = { id: 'prov1', nombre: 'Maderas del Sur' };
+
+  console.log('\nInventario permitido:');
+  await prueba('vendedor ingresa material con costo y proveedor', 'permitir', async () => {
+    await ingresarMaterialTx(dbV, { materialId: 'm1', cantidad: 6, costoUnitario: 190.5, proveedor: prov, nota: 'Compra' }, VEND);
+    const m = (await getDoc(doc(dbA, 'materiales', 'm1'))).data()!;
+    if (m.stock !== 16 || m.ultimoCosto !== 190.5) throw new Error(`stock ${m.stock}, costo ${m.ultimoCosto}`);
+  });
+  await prueba('vendedor ingresa material con decimales (100.3 + 0.1 + 0.2)', 'permitir', async () => {
+    await ingresarMaterialTx(dbV, { materialId: 'm2', cantidad: 0.1, costoUnitario: null, proveedor: null, nota: null }, VEND);
+    await ingresarMaterialTx(dbV, { materialId: 'm2', cantidad: 0.2, costoUnitario: null, proveedor: null, nota: null }, VEND);
+  });
+  await prueba('vendedor registra consumo de material (salida)', 'permitir', () =>
+    salidaMaterialTx(dbV, { materialId: 'm2', cantidad: 12.75, nota: 'Ropero #12' }, VEND)
+  );
+  await prueba('admin ajusta stock de producto con motivo', 'permitir', async () => {
+    await ajustarStockTx(dbA, { itemTipo: 'producto', itemId: 'p8', stockNuevo: 47, motivo: 'Conteo físico' }, ADMIN);
+    const p = (await getDoc(doc(dbA, 'productos', 'p8'))).data()!;
+    if (p.stock !== 47) throw new Error(`stock ${p.stock}`);
+  });
+  await prueba('admin ajusta stock de material a decimal', 'permitir', () =>
+    ajustarStockTx(dbA, { itemTipo: 'material', itemId: 'm2', stockNuevo: 80.5, motivo: 'Merma' }, ADMIN)
+  );
+  await prueba('admin edita precio y nombre de un producto (sin tocar stock)', 'permitir', () =>
+    updateDoc(doc(dbA, 'productos', 'p8'), { precio: 120, nombre: 'Producto 8 editado', actualizadoEn: serverTimestamp() })
+  );
+  await prueba('admin crea producto con stock inicial (kardex)', 'permitir', () =>
+    crearItemConStockTx(
+      dbA,
+      'producto',
+      { nombre: 'Nuevo ropero', descripcion: null, categoriaId: null, categoriaNombre: null, precio: 500, costo: 300, stockMinimo: 1, fotoUrl: null, activo: true },
+      4,
+      ADMIN
+    )
+  );
+  await prueba('admin crea material sin stock', 'permitir', () =>
+    crearItemConStockTx(
+      dbA,
+      'material',
+      { nombre: 'Bisagra cangrejo', tipo: 'bisagra', color: null, espesorMm: null, unidad: 'und', stockMinimo: 20, ultimoCosto: 1.8, proveedorId: null, proveedorNombre: null },
+      0,
+      ADMIN
+    )
+  );
+  await prueba('admin crea proveedor', 'permitir', () =>
+    setDoc(doc(dbA, 'proveedores', 'prov2'), { nombre: 'Ferretería Lima', telefono: null, contacto: null, direccion: null, notas: null })
+  );
+
+  console.log('\nInventario bloqueado:');
+  await prueba('vendedor ajusta stock', 'denegar', () =>
+    ajustarStockTx(dbV, { itemTipo: 'material', itemId: 'm1', stockNuevo: 99, motivo: 'Conteo' }, VEND)
+  );
+  await prueba('admin cambia stock de producto sin movimiento', 'denegar', () =>
+    updateDoc(doc(dbA, 'productos', 'p8'), { stock: 100, actualizadoEn: serverTimestamp() })
+  );
+  await prueba('admin crea producto con stock sin movimiento', 'denegar', () =>
+    setDoc(doc(dbA, 'productos', 'px'), {
+      nombre: 'Trucho', descripcion: null, categoriaId: null, categoriaNombre: null, precio: 1, costo: null,
+      stock: 5, stockMinimo: 1, fotoUrl: null, activo: true,
+    })
+  );
+  await prueba('vendedor sube stock de material sin movimiento', 'denegar', () =>
+    updateDoc(doc(dbV, 'materiales', 'm1'), { stock: 999, actualizadoEn: serverTimestamp() })
+  );
+  await prueba('vendedor reutiliza un movimiento antiguo para subir stock', 'denegar', async () => {
+    const m = (await getDoc(doc(dbV, 'materiales', 'm1'))).data()!;
+    await updateDoc(doc(dbV, 'materiales', 'm1'), { stock: m.stock + 6, ultimoMovimientoId: m.ultimoMovimientoId, actualizadoEn: serverTimestamp() });
+  });
+  await prueba('vendedor ingresa material poniendo otro último costo', 'denegar', () =>
+    runTransaction(dbV, async (tx) => {
+      const ref = doc(dbV, 'materiales', 'm1');
+      const m = (await tx.get(ref)).data()!;
+      const movRef = doc(dbV, 'movimientos', 'mov-costo-falso');
+      tx.update(ref, { stock: m.stock + 1, ultimoCosto: 1, ultimoMovimientoId: movRef.id, actualizadoEn: serverTimestamp() });
+      tx.set(movRef, {
+        tipo: 'entrada', itemTipo: 'material', itemId: 'm1', itemNombre: m.nombre, cantidad: 1, costoUnitario: 190.5,
+        stockAnterior: m.stock, stockNuevo: m.stock + 1, ventaId: null, indiceItem: null, proveedorId: null,
+        proveedorNombre: null, nota: null, usuarioId: VEND.uid, usuarioNombre: VEND.nombre, fecha: serverTimestamp(),
+      });
+    })
+  );
+  await prueba('vendedor crea movimiento de ingreso sin tocar el material', 'denegar', async () => {
+    const m = (await getDoc(doc(dbV, 'materiales', 'm1'))).data()!;
+    await setDoc(doc(dbV, 'movimientos', 'mov-suelto'), {
+      tipo: 'entrada', itemTipo: 'material', itemId: 'm1', itemNombre: m.nombre, cantidad: 3, costoUnitario: null,
+      stockAnterior: m.stock, stockNuevo: m.stock + 3, ventaId: null, indiceItem: null, proveedorId: null,
+      proveedorNombre: null, nota: null, usuarioId: VEND.uid, usuarioNombre: VEND.nombre, fecha: serverTimestamp(),
+    });
+  });
+  await prueba('vendedor ingresa stock a un producto (no material)', 'denegar', () =>
+    runTransaction(dbV, async (tx) => {
+      const ref = doc(dbV, 'productos', 'p8');
+      const p = (await tx.get(ref)).data()!;
+      const movRef = doc(dbV, 'movimientos', 'mov-prod-entrada');
+      tx.update(ref, { stock: p.stock + 5, ultimoMovimientoId: movRef.id, actualizadoEn: serverTimestamp() });
+      tx.set(movRef, {
+        tipo: 'entrada', itemTipo: 'producto', itemId: 'p8', itemNombre: p.nombre, cantidad: 5, costoUnitario: null,
+        stockAnterior: p.stock, stockNuevo: p.stock + 5, ventaId: null, indiceItem: null, proveedorId: null,
+        proveedorNombre: null, nota: null, usuarioId: VEND.uid, usuarioNombre: VEND.nombre, fecha: serverTimestamp(),
+      });
+    })
+  );
+  await prueba('vendedor crea un material', 'denegar', () =>
+    crearItemConStockTx(dbV, 'material', { nombre: 'X material', tipo: 'otro', color: null, espesorMm: null, unidad: 'und', stockMinimo: 0, ultimoCosto: null, proveedorId: null, proveedorNombre: null }, 0, VEND)
+  );
+  await prueba('vendedor crea un proveedor', 'denegar', () =>
+    setDoc(doc(dbV, 'proveedores', 'prov3'), { nombre: 'Proveedor X', telefono: null, contacto: null, direccion: null, notas: null })
+  );
+  await prueba('vendedor edita un movimiento del kardex', 'denegar', async () => {
+    const id = `${ventas[0]}_p1`;
+    await updateDoc(doc(dbV, 'movimientos', id), { cantidad: 99 });
+  });
+  await prueba('consumo mayor al stock se rechaza en la app', 'denegar', () =>
+    salidaMaterialTx(dbV, { materialId: 'm1', cantidad: 9999, nota: null }, VEND).catch((e) => {
       throw new Error(/Stock insuficiente/.test(e.message) ? 'PERMISSION_DENIED (bloqueado por la app)' : e.message);
     })
   );

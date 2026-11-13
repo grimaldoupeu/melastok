@@ -3,7 +3,7 @@ rules_version = '2';
 // =====================================================================
 //  MelaStock · Reglas de Firestore
 //  Desplegar: firebase deploy --only firestore
-//  Probar:    npm run test:reglas   (emulador, ver scripts/test-reglas-ventas.ts)
+//  Probar:    npm run test:reglas   (emulador, ver scripts/test-reglas.ts)
 //
 //  Límite de Firestore: máximo 10 lecturas de documentos (get/exists/
 //  getAfter/existsAfter) por operación y 20 por transacción completa.
@@ -139,18 +139,50 @@ service cloud.firestore {
     }
 
     // ==================================================================
+    // STOCK (productos y materiales)
+    //   El stock SOLO cambia junto con un movimiento NUEVO del kardex creado
+    //   en la misma transacción: el ítem guarda ultimoMovimientoId y ese
+    //   movimiento debe tener el mismo ítem, stockAnterior = stock previo y
+    //   stockNuevo = stock nuevo. Quién puede crear cada tipo de movimiento
+    //   (venta, anulación, ingreso, salida, ajuste) se decide en /movimientos.
+    // ==================================================================
+
+    // ¿El movimiento es nuevo en esta transacción? (1 lectura)
+    //   - salida por venta: la venta no existía antes
+    //   - entrada por anulación: la venta no estaba cancelada antes
+    //   - resto: el documento del movimiento no existía antes
+    function movimientoEsNuevo(movId, mov) {
+      return mov.ventaId is string
+        ? (mov.tipo == 'salida'
+            ? !exists(ruta('ventas', mov.ventaId))
+            : get(ruta('ventas', mov.ventaId)).data.estadoEntrega != 'cancelado')
+        : !exists(ruta('movimientos', movId));
+    }
+
+    // 2 lecturas: movimientos/{movId} (después) + la de movimientoEsNuevo
+    function stockConMovimiento(itemTipo, itemId, stockAnterior) {
+      let nuevo = request.resource.data;
+      let movId = nuevo.ultimoMovimientoId;
+      let mov = getAfter(ruta('movimientos', movId)).data;
+      return movId is string
+        && mov.itemTipo == itemTipo
+        && mov.itemId == itemId
+        && mov.stockAnterior == stockAnterior
+        && mov.stockNuevo == nuevo.stock
+        && mov.usuarioId == request.auth.uid
+        && movimientoEsNuevo(movId, mov);
+    }
+
+    // ==================================================================
     // productos/{id}
-    //   El vendedor NUNCA edita productos directamente. Solo puede bajar el
-    //   stock dentro de la transacción de una venta nueva:
-    //     - el producto guarda ultimaVentaId = id de la venta,
-    //     - esa venta NO existía antes de la transacción y
-    //     - existe el movimiento movimientos/{ventaId}_{productoId} con la
-    //       misma cantidad, stockAnterior y stockNuevo.
-    //   El movimiento, a su vez, exige que la venta lo contenga (ver abajo).
+    //   Leen usuarios activos. El admin crea, edita y borra, pero el stock
+    //   solo cambia con movimiento (venta, anulación, ajuste o stock inicial).
+    //   El vendedor solo toca stock/ultimoMovimientoId dentro de una venta.
     // ==================================================================
     function productoValido(d) {
       return d.keys().hasOnly(['nombre', 'descripcion', 'categoriaId', 'categoriaNombre', 'precio', 'costo',
-                               'stock', 'stockMinimo', 'fotoUrl', 'activo', 'creadoEn', 'actualizadoEn', 'ultimaVentaId'])
+                               'stock', 'stockMinimo', 'fotoUrl', 'activo', 'creadoEn', 'actualizadoEn',
+                               'ultimaVentaId', 'ultimoMovimientoId'])
         && d.nombre is string && d.nombre.size() >= 2 && d.nombre.size() <= 120
         && esTextoOpcional(d.descripcion)
         && esTextoOpcional(d.categoriaId)
@@ -163,34 +195,82 @@ service cloud.firestore {
         && d.activo is bool;
     }
 
-    // 2 lecturas: ventas/{v} (antes) y movimientos/{v}_{id} (después)
-    function bajaDeStockPorVenta(productoId) {
-      let nuevo = request.resource.data;
-      let ventaId = nuevo.ultimaVentaId;
-      let mov = getAfter(ruta('movimientos', ventaId + '_' + productoId)).data;
-      return ventaId is string
-        && ventaId != resource.data.get('ultimaVentaId', '')
-        && !exists(ruta('ventas', ventaId))
-        && mov.tipo == 'salida'
-        && mov.ventaId == ventaId
-        && mov.itemId == productoId
-        && mov.usuarioId == request.auth.uid
-        && mov.stockAnterior == resource.data.stock
-        && mov.stockNuevo == nuevo.stock
-        && mov.cantidad == resource.data.stock - nuevo.stock;
-    }
-
     match /productos/{id} {
       allow read: if esUsuarioActivo();
-      allow create: if esAdmin() && productoValido(request.resource.data);
       allow delete: if esAdmin();
+      allow create: if esAdmin() && productoValido(request.resource.data)
+        && (request.resource.data.stock == 0 || stockConMovimiento('producto', id, 0));
       allow update: if productoValido(request.resource.data) && (
-          (
-            cambiaSolo(['stock', 'ultimaVentaId', 'actualizadoEn'])
-            && request.resource.data.stock < resource.data.stock
-            && bajaDeStockPorVenta(id)
-          )
-          || esAdmin()
+          request.resource.data.stock == resource.data.stock
+            ? esAdmin()
+            : (
+              stockConMovimiento('producto', id, resource.data.stock)
+              && (cambiaSolo(['stock', 'ultimoMovimientoId', 'actualizadoEn']) || esAdmin())
+            )
+        );
+    }
+
+    // ==================================================================
+    // proveedores/{id} — leen usuarios activos; escribe el admin
+    // ==================================================================
+    function proveedorValido(d) {
+      return d.keys().hasOnly(['nombre', 'telefono', 'contacto', 'direccion', 'notas', 'creadoEn', 'actualizadoEn'])
+        && d.nombre is string && d.nombre.size() >= 2 && d.nombre.size() <= 100
+        && esTextoOpcional(d.telefono)
+        && esTextoOpcional(d.contacto)
+        && esTextoOpcional(d.direccion)
+        && esTextoOpcional(d.notas);
+    }
+
+    match /proveedores/{id} {
+      allow read: if esUsuarioActivo();
+      allow create, update: if esAdmin() && proveedorValido(request.resource.data);
+      allow delete: if esAdmin();
+    }
+
+    // ==================================================================
+    // materiales/{id}
+    //   Leen usuarios activos. El admin crea, edita y borra. El stock solo
+    //   cambia con movimiento: ingreso o salida (admin y vendedor) o ajuste
+    //   (admin). En un ingreso, ultimoCosto solo puede tomar el costo del
+    //   movimiento.
+    // ==================================================================
+    function materialValido(d) {
+      return d.keys().hasOnly(['nombre', 'tipo', 'color', 'espesorMm', 'unidad', 'stock', 'stockMinimo', 'ultimoCosto',
+                               'proveedorId', 'proveedorNombre', 'creadoEn', 'actualizadoEn', 'ultimoMovimientoId'])
+        && d.nombre is string && d.nombre.size() >= 2 && d.nombre.size() <= 120
+        && d.tipo in ['plancha', 'tapacanto', 'bisagra', 'corredera', 'tornilleria', 'otro']
+        && esTextoOpcional(d.color)
+        && esNumeroOpcional(d.espesorMm)
+        && d.unidad is string && d.unidad.size() >= 1 && d.unidad.size() <= 20
+        && d.stock is number && d.stock >= 0
+        && d.stockMinimo is number && d.stockMinimo >= 0
+        && esNumeroOpcional(d.ultimoCosto)
+        && esTextoOpcional(d.proveedorId)
+        && esTextoOpcional(d.proveedorNombre);
+    }
+
+    function ultimoCostoDelMovimiento() {
+      let nuevo = request.resource.data;
+      return nuevo.get('ultimoCosto', null) == resource.data.get('ultimoCosto', null)
+        || nuevo.ultimoCosto == getAfter(ruta('movimientos', nuevo.ultimoMovimientoId)).data.costoUnitario;
+    }
+
+    match /materiales/{id} {
+      allow read: if esUsuarioActivo();
+      allow delete: if esAdmin();
+      allow create: if esAdmin() && materialValido(request.resource.data)
+        && (request.resource.data.stock == 0 || stockConMovimiento('material', id, 0));
+      allow update: if materialValido(request.resource.data) && (
+          request.resource.data.stock == resource.data.stock
+            ? esAdmin()
+            : (
+              stockConMovimiento('material', id, resource.data.stock)
+              && (
+                (cambiaSolo(['stock', 'ultimoCosto', 'ultimoMovimientoId', 'actualizadoEn']) && ultimoCostoDelMovimiento())
+                || esAdmin()
+              )
+            )
         );
     }
 
@@ -291,26 +371,52 @@ service cloud.firestore {
 
     // ==================================================================
     // movimientos/{movId} — kardex. Inmutable: no se edita ni se borra.
-    //   Salida por venta: id = {ventaId}_{productoId}; la venta es nueva en
-    //   esta transacción, contiene el producto en items[indiceItem] con la
-    //   misma cantidad, y el stock del producto queda en stockNuevo.
-    //   Entrada por anulación: solo admin, id = {ventaId}_{productoId}_anul.
+    //   Cada movimiento exige que su ítem quede, en la misma transacción, con
+    //   stock == stockNuevo y ultimoMovimientoId == movId (y el ítem exige lo
+    //   inverso), así ninguno de los dos puede escribirse sin el otro.
+    //
+    //   | tipo / ítem                 | quién         | id                       |
+    //   | salida  producto (venta)    | activo        | {ventaId}_{productoId}   |
+    //   | entrada producto (anulación)| admin         | {ventaId}_{productoId}_anul |
+    //   | entrada material (ingreso)  | activo        | automático               |
+    //   | salida  material (consumo)  | activo        | automático               |
+    //   | ajuste  producto/material   | admin         | automático               |
     // ==================================================================
     function movimientoCampos() {
       return ['tipo', 'itemTipo', 'itemId', 'itemNombre', 'cantidad', 'costoUnitario', 'stockAnterior', 'stockNuevo',
               'ventaId', 'indiceItem', 'proveedorId', 'proveedorNombre', 'nota', 'usuarioId', 'usuarioNombre', 'fecha'];
     }
 
+    function coleccionDeItem(itemTipo) {
+      return itemTipo == 'producto' ? 'productos' : 'materiales';
+    }
+
     function movimientoBaseValido(m) {
       return exactamente(m, movimientoCampos())
-        && m.itemTipo == 'producto'
+        && m.itemTipo in ['producto', 'material']
         && m.itemId is string && m.itemNombre is string
-        && m.cantidad is int && m.cantidad > 0
-        && esEnteroNoNegativo(m.stockAnterior)
-        && esEnteroNoNegativo(m.stockNuevo)
+        && m.cantidad is number
+        && m.stockAnterior is number && m.stockAnterior >= 0
+        && m.stockNuevo is number && m.stockNuevo >= 0
+        // Los productos se cuentan en unidades enteras
+        && (m.itemTipo == 'material' || (m.cantidad is int && m.stockAnterior is int && m.stockNuevo is int))
         && esNumeroOpcional(m.costoUnitario)
+        && esTextoOpcional(m.proveedorId)
+        && esTextoOpcional(m.proveedorNombre)
+        && esTextoOpcional(m.nota)
         && m.usuarioId == request.auth.uid
+        && m.usuarioNombre is string
         && m.fecha == request.time;
+    }
+
+    // El ítem queda con este movimiento aplicado (1 lectura)
+    function itemQuedaCon(m, movId) {
+      let item = getAfter(ruta(coleccionDeItem(m.itemTipo), m.itemId)).data;
+      return item.stock == m.stockNuevo && item.ultimoMovimientoId == movId;
+    }
+
+    function sinVenta(m) {
+      return m.ventaId == null && m.indiceItem == null;
     }
 
     // 3 lecturas: ventas/{v} (antes y después) y productos/{id} (después)
@@ -319,33 +425,70 @@ service cloud.firestore {
       let venta = getAfter(ruta('ventas', m.ventaId)).data;
       let item = venta.items[m.indiceItem];
       return movimientoBaseValido(m)
-        && m.tipo == 'salida'
+        && m.itemTipo == 'producto'
         && m.ventaId is string
         && movId == m.ventaId + '_' + m.itemId
         && m.indiceItem is int && m.indiceItem >= 0
+        && m.cantidad > 0
         && !exists(ruta('ventas', m.ventaId))
         && venta.vendedorId == request.auth.uid
         && item.productoId == m.itemId
         && item.cantidad == m.cantidad
         && m.stockNuevo == m.stockAnterior - m.cantidad
-        && getAfter(ruta('productos', m.itemId)).data.stock == m.stockNuevo;
+        && itemQuedaCon(m, movId);
     }
 
     function entradaPorAnulacionValida(movId) {
       let m = request.resource.data;
       return movimientoBaseValido(m)
-        && m.tipo == 'entrada'
+        && m.itemTipo == 'producto'
         && m.ventaId is string
         && movId == m.ventaId + '_' + m.itemId + '_anul'
+        && m.cantidad > 0
         && m.stockNuevo == m.stockAnterior + m.cantidad
-        && getAfter(ruta('ventas', m.ventaId)).data.estadoEntrega == 'cancelado';
+        && getAfter(ruta('ventas', m.ventaId)).data.estadoEntrega == 'cancelado'
+        && itemQuedaCon(m, movId);
+    }
+
+    // Ingreso (entrada) o consumo (salida) de material: admin y vendedor
+    function movimientoMaterialValido(movId) {
+      let m = request.resource.data;
+      return movimientoBaseValido(m)
+        && m.itemTipo == 'material'
+        && sinVenta(m)
+        && m.cantidad > 0
+        && (
+          (m.tipo == 'entrada' && m.stockNuevo == m.stockAnterior + m.cantidad)
+          || (m.tipo == 'salida' && m.stockNuevo == m.stockAnterior - m.cantidad
+              && m.proveedorId == null && m.proveedorNombre == null)
+        )
+        && itemQuedaCon(m, movId);
+    }
+
+    // Ajuste (solo admin): cantidad = diferencia, con motivo obligatorio
+    function ajusteValido(movId) {
+      let m = request.resource.data;
+      return movimientoBaseValido(m)
+        && sinVenta(m)
+        && m.cantidad != 0
+        && m.cantidad == m.stockNuevo - m.stockAnterior
+        && m.nota is string && m.nota.size() >= 3 && m.nota.size() <= 200
+        && m.proveedorId == null && m.proveedorNombre == null
+        && itemQuedaCon(m, movId);
     }
 
     match /movimientos/{movId} {
       allow read: if esUsuarioActivo();
       allow update, delete: if false;
-      allow create: if (request.resource.data.tipo == 'salida' && salidaPorVentaValida(movId))
-        || (request.resource.data.tipo == 'entrada' && esAdmin() && entradaPorAnulacionValida(movId));
+      allow create: if
+        (request.resource.data.tipo == 'salida' && request.resource.data.ventaId is string
+          && salidaPorVentaValida(movId))
+        || (request.resource.data.tipo == 'entrada' && request.resource.data.ventaId is string
+          && esAdmin() && entradaPorAnulacionValida(movId))
+        || (request.resource.data.tipo in ['entrada', 'salida'] && request.resource.data.ventaId == null
+          && esUsuarioActivo() && movimientoMaterialValido(movId))
+        || (request.resource.data.tipo == 'ajuste'
+          && esAdmin() && ajusteValido(movId));
     }
 
     // ==================================================================

@@ -57,7 +57,7 @@
     "build:apk": "eas build -p android --profile preview",
     "dev": "expo start --dev-client",
     "build:dev": "eas build -p android --profile development",
-    "test:reglas": "firebase emulators:exec --project demo-melastock --only firestore \"npx tsx scripts/test-reglas-ventas.ts\""
+    "test:reglas": "firebase emulators:exec --project demo-melastock --only firestore \"npx tsx scripts/test-reglas.ts\""
   },
   "private": true,
   "description": "MelaStock - ventas e inventario para talleres de muebles de melamina (GAMA Studio)"

@@ -1,6 +1,6 @@
 /**
  * Lógica transaccional de ventas, independiente de React Native.
- * La usa src/services/ventas.ts (app) y scripts/test-reglas-ventas.ts (emulador).
+ * La usa src/services/ventas.ts (app) y scripts/test-reglas.ts (emulador).
  *
  * Cada operación es una sola runTransaction: si cualquier lectura o validación
  * falla, no se escribe nada. Las reglas de Firestore (firestore.rules) verifican
@@ -167,7 +167,11 @@ export async function registrarVentaTx(db: Firestore, input: NuevaVentaInput, ve
     });
 
     lineas.forEach((l, indiceItem) => {
-      tx.update(l.ref, { stock: l.stockNuevo, ultimaVentaId: ventaRef.id, actualizadoEn: serverTimestamp() });
+      tx.update(l.ref, {
+        stock: l.stockNuevo,
+        ultimoMovimientoId: `${ventaRef.id}_${l.productoId}`,
+        actualizadoEn: serverTimestamp(),
+      });
       tx.set(doc(db, 'movimientos', `${ventaRef.id}_${l.productoId}`), {
         tipo: 'salida',
         itemTipo: 'producto',
@@ -241,7 +245,11 @@ export async function cancelarVentaTx(db: Firestore, ventaId: string, admin: Usu
       if (!snap.exists()) return; // producto eliminado: no hay stock que devolver
       const stockAnterior = Number((snap.data() as DocumentData).stock ?? 0);
       const stockNuevo = stockAnterior + it.cantidad;
-      tx.update(productoRefs[indiceItem], { stock: stockNuevo, actualizadoEn: serverTimestamp() });
+      tx.update(productoRefs[indiceItem], {
+        stock: stockNuevo,
+        ultimoMovimientoId: `${ventaId}_${it.productoId}_anul`,
+        actualizadoEn: serverTimestamp(),
+      });
       tx.set(doc(db, 'movimientos', `${ventaId}_${it.productoId}_anul`), {
         tipo: 'entrada',
         itemTipo: 'producto',

@@ -7,20 +7,12 @@ import { SaleRow } from '@/components/sale-card';
 import { Avatar, Banner, Card, EmptyState, type IconName, LoadingView, Screen, SectionTitle, StatCard } from '@/components/ui';
 import { Colors, FontSize, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/hooks/use-auth';
-import { useQuery } from '@/hooks/use-query';
 import { useRealtime } from '@/hooks/use-realtime';
-import { firstName, formatLongDate, initials, isPastISODate, limaStartOfMonth, monthName, soles, toISODate } from '@/lib/format';
-import { supabase } from '@/lib/supabase';
+import { firstName, formatLongDate, initials, isPastISODate, limaStartOfMonth, monthName, qty, soles, toISODate } from '@/lib/format';
+import { observarMateriales } from '@/services/materiales';
 import { observarProductosActivos } from '@/services/productos';
 import { observarEntregas, observarVentasDesde } from '@/services/ventas';
-import type { Material, Venta } from '@/types/db';
-
-// Materiales: todavía en Supabase (se migran en la fase 4)
-async function fetchLowMaterials() {
-  const { data, error } = await supabase.from('materials').select('id,name,stock,min_stock,unit');
-  if (error) throw error;
-  return ((data ?? []) as Pick<Material, 'id' | 'name' | 'stock' | 'min_stock' | 'unit'>[]).filter((m) => Number(m.stock) <= Number(m.min_stock));
-}
+import type { Venta } from '@/types/db';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -30,7 +22,7 @@ export default function HomeScreen() {
   const ventasMes = useRealtime<Venta[]>((onData, onError) => observarVentasDesde(limaStartOfMonth(), onData, onError, 1000), [monthName()]);
   const entregas = useRealtime<Venta[]>((onData, onError) => observarEntregas('activos', onData, onError));
   const productos = useRealtime(observarProductosActivos);
-  const materiales = useQuery(fetchLowMaterials, []);
+  const materiales = useRealtime(observarMateriales);
 
   const stats = useMemo(() => {
     const hoy = toISODate(new Date());
@@ -46,7 +38,7 @@ export default function HomeScreen() {
   }, [ventasMes.data]);
 
   const lowProducts = (productos.data ?? []).filter((p) => p.stock <= p.stockMinimo);
-  const lowMaterials = materiales.data ?? [];
+  const lowMaterials = (materiales.data ?? []).filter((m) => m.stock <= m.stockMinimo);
   const lowCount = lowProducts.length + lowMaterials.length;
   const activeOrders = entregas.data?.length ?? 0;
   const lateOrders = (entregas.data ?? []).filter((v) => isPastISODate(v.fechaEntrega)).length;
@@ -129,9 +121,9 @@ export default function HomeScreen() {
               {lowMaterials.slice(0, 2).map((m) => (
                 <Banner
                   key={m.id}
-                  tone={Number(m.stock) === 0 ? 'danger' : 'warning'}
+                  tone={m.stock <= 0 ? 'danger' : 'warning'}
                   icon="layers-outline"
-                  text={`${m.name}: ${m.stock} ${m.unit} (mín. ${m.min_stock})`}
+                  text={`${m.nombre}: ${qty(m.stock)} ${m.unidad} (mín. ${qty(m.stockMinimo)})`}
                   action="Ver"
                   onPress={() => router.push({ pathname: '/material/[id]', params: { id: m.id } })}
                 />

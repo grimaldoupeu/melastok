@@ -4,40 +4,112 @@
       "collectionGroup": "categorias",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "orden", "order": "ASCENDING" },
-        { "fieldPath": "nombre", "order": "ASCENDING" }
+        {
+          "fieldPath": "orden",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "nombre",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "productos",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "activo", "order": "ASCENDING" },
-        { "fieldPath": "nombre", "order": "ASCENDING" }
+        {
+          "fieldPath": "activo",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "nombre",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "ventas",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "estadoEntrega", "order": "ASCENDING" },
-        { "fieldPath": "fechaEntrega", "order": "ASCENDING" }
+        {
+          "fieldPath": "estadoEntrega",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "fechaEntrega",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "ventas",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "estadoEntrega", "order": "ASCENDING" },
-        { "fieldPath": "fechaEntrega", "order": "DESCENDING" }
+        {
+          "fieldPath": "estadoEntrega",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "fechaEntrega",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "ventas",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "estadoEntrega", "order": "ASCENDING" },
-        { "fieldPath": "fecha", "order": "DESCENDING" }
+        {
+          "fieldPath": "estadoEntrega",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "fecha",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "materiales",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "tipo",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "nombre",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "movimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "itemId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "fecha",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "movimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "proveedorId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "fecha",
+          "order": "DESCENDING"
+        }
       ]
     }
   ],

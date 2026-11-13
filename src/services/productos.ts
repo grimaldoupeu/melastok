@@ -5,7 +5,6 @@
  * descuentan en su transacción (fase 3) y los ajustes pasan por el kardex (fase 4).
  */
 import {
-  addDoc,
   collection,
   deleteDoc,
   doc,
@@ -79,18 +78,11 @@ export type ProductoInput = {
   activo: boolean;
 };
 
-export async function crearProducto(data: ProductoInput & { stock: number; fotoUrl?: string | null }): Promise<string> {
-  const ref = await addDoc(collection(db, COL), {
-    ...data,
-    fotoUrl: data.fotoUrl ?? null,
-    creadoEn: serverTimestamp(),
-    actualizadoEn: serverTimestamp(),
-  });
-  return ref.id;
-}
-
-/** Actualiza los datos del producto. `stock` solo lo puede tocar el admin (las reglas lo validan). */
-export async function actualizarProducto(id: string, data: Partial<ProductoInput> & { stock?: number; fotoUrl?: string | null }) {
+/**
+ * Actualiza los datos del producto. El stock NO se toca aquí: se crea con
+ * stock inicial y se modifica con ventas o ajustes (src/services/inventario.ts).
+ */
+export async function actualizarProducto(id: string, data: Partial<ProductoInput> & { fotoUrl?: string | null }) {
   await updateDoc(doc(db, COL, id), { ...data, actualizadoEn: serverTimestamp() });
 }
 
