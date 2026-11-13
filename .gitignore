@@ -50,3 +50,6 @@ example
 serviceAccount.json
 firebase-debug.log
 firestore-debug.log
+
+# Respaldos de la base de datos (contienen datos de clientes)
+backups/

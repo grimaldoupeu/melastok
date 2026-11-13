@@ -9,6 +9,26 @@ rules_version = '2';
 //  getAfter/existsAfter) por operación y 20 por transacción completa.
 //  Por eso cada regla lee lo mínimo y una venta admite MAX_ITEMS_VENTA
 //  productos distintos (mismo valor en src/services/ventas-core.ts).
+//
+//  Resumen de permisos (todo exige sesión y perfil APROBADO, salvo leer el
+//  propio perfil; un perfil pendiente o desactivado no ve nada más):
+//
+//  | colección       | leer   | crear / modificar                                  |
+//  | perfiles        | propio / activos | propio como vendedor inactivo; admin aprueba, cambia rol |
+//  | categorias      | activo | admin                                              |
+//  | productos       | activo | admin (datos); stock solo con movimiento de kardex |
+//  | materiales      | activo | admin (datos); stock solo con movimiento de kardex |
+//  | proveedores     | activo | admin                                              |
+//  | movimientos     | activo | según tipo: venta/ingreso/consumo (activo), ajuste/anulación (admin); inmutable |
+//  | clientes        | activo | activo                                             |
+//  | ventas          | activo | activo (transacción completa); cancelar: admin; nunca se borran |
+//  | pedidos         | activo | activo; cancelar y cambiar precio: admin; nunca se borran |
+//  | contadores      | activo | solo +1 junto con su venta / pedido; serie: admin  |
+//  | resumen_diario  | activo | solo junto con una venta, anulación o pago nuevo   |
+//  | (otras)         | nadie  | nadie                                              |
+//
+//  Los scripts de administración (seed, reset, backup, restore) usan
+//  firebase-admin con cuenta de servicio y no pasan por estas reglas.
 // =====================================================================
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -821,8 +841,8 @@ service cloud.firestore {
     }
 
     // ------------------------------------------------------------------
-    // Resto de colecciones: denegado hasta su fase. Al agregarlas, toda
-    // lectura/escritura parte de esUsuarioActivo() o esAdmin().
+    // Cualquier otra colección: denegada. Si se agrega una nueva, toda
+    // lectura/escritura debe partir de esUsuarioActivo() o esAdmin().
     // ------------------------------------------------------------------
     match /{document=**} {
       allow read, write: if false;

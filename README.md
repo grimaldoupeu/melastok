@@ -1,139 +1,190 @@
 # MelaStock
 
-App Android para talleres y tiendas de muebles de melamina en Perú: catálogo, ventas con boleta por WhatsApp, inventario de productos y materiales, pedidos y reportes.
+App Android para talleres y tiendas de muebles de melamina en Perú: catálogo, ventas con boleta por WhatsApp, inventario de productos y materiales con kardex, pedidos a medida, reportes y cierre de caja.
 
 Desarrollada por **GAMA Studio**.
 
+- [Guía para el dueño de la tienda](#guía-para-el-dueño-de-la-tienda)
+- [Guía técnica](#guía-técnica)
+
+---
+
+# Guía para el dueño de la tienda
+
+## Usuarios y permisos
+
+Hay dos tipos de usuario:
+
+| Puede… | Vendedor | Administrador |
+| --- | :---: | :---: |
+| Vender, enviar boletas por WhatsApp | ✅ | ✅ |
+| Registrar pedidos a medida, cobrar pagos, avanzar etapas | ✅ | ✅ |
+| Registrar ingresos y consumos de material | ✅ | ✅ |
+| Ver su propio cierre de caja | ✅ | ✅ |
+| Crear y editar productos, categorías, materiales y proveedores | | ✅ |
+| Ajustar stock (con motivo, queda en el kardex) | | ✅ |
+| Anular ventas, cancelar pedidos, cambiar el precio de un pedido | | ✅ |
+| Ver costos, ganancia de pedidos y el cierre de caja de todos | | ✅ |
+| Crear, aprobar y desactivar usuarios | | ✅ |
+
+### Crear un vendedor
+
+1. Entra con tu cuenta de administrador.
+2. Toca tu foto (arriba a la derecha en **Inicio**) → **Gestionar usuarios** → botón **+**.
+3. Escribe nombre, correo y una contraseña de al menos 6 caracteres, elige **Vendedor** y toca **Crear usuario**.
+4. Pásale el correo y la contraseña al vendedor. Podrá cambiar su contraseña desde **Mi perfil**.
+
+### Aprobar usuarios pendientes
+
+Si alguien inicia sesión con una cuenta que no creaste tú, verá el mensaje *"Tu cuenta está pendiente de aprobación"* y no podrá usar nada.
+
+1. Ve a **Gestionar usuarios**. Los pendientes aparecen arriba, en amarillo.
+2. Toca **Aprobar** si lo conoces. Su app se desbloquea sola en ese momento.
+3. Para quitarle el acceso a alguien (por ejemplo, un vendedor que ya no trabaja contigo), toca **Desactivar**. Se le cierra la sesión al instante.
+
+## El día a día
+
+- **Vender**: Catálogo → toca **+** en cada producto → **Ver carrito** → completa cliente y pago → **Cobrar**. Al terminar, **Enviar boleta por WhatsApp**. Una boleta admite hasta 5 productos distintos (la cantidad de cada uno es libre).
+- **Pedidos a medida**: Pedidos → **A medida** → **+**. Registra descripción, medidas, precio, fecha de entrega y el adelanto. Desde el pedido avanzas las etapas (Corte, Enchapado, Armado, Listo para entrega, Entregado), registras pagos y envías el estado y el saldo al cliente por WhatsApp. Los pedidos atrasados se ven en rojo.
+- **Materiales**: Inventario → Materiales → elige el material → **Ingreso** (compras, con costo y proveedor) o **Consumo** (lo que se usa en el taller). En el consumo puedes elegir el pedido a medida en que se usó: así el administrador ve cuánto costaron sus materiales y la ganancia estimada.
+- **Stock bajo**: Inicio e Inventario avisan cuando un producto o material llega a su stock mínimo.
+
+## Cierre de caja
+
+1. **Inicio** → **Cierre de caja** (o toca "Ventas de hoy").
+2. Verás el **total en caja** y lo que corresponde a **Efectivo, Yape, Plin y Tarjeta**, sumando ventas del catálogo y pagos de pedidos a medida, más el detalle de cada operación. Las ventas anuladas aparecen tachadas y no suman.
+3. Para revisar otro día, usa las flechas o toca la fecha.
+4. Como administrador puedes filtrar por vendedor. Cada vendedor ve solo lo que registró él.
+5. **Compartir cierre por WhatsApp** envía el resumen del día (por ejemplo, a tu propio número o al grupo del negocio).
+
+Compara el total de **Efectivo** con el dinero físico en caja, y los de Yape/Plin/Tarjeta con tus aplicaciones y el POS.
+
+## Reportes
+
+Reportes → elige **Día**, **Semana** o **Mes** y muévete con las flechas. Verás ingresos con su variación frente al periodo anterior, gráfico por día, métodos de pago, productos más vendidos, ventas por vendedor, margen y ticket promedio. El administrador ve además la ganancia estimada de los pedidos a medida entregados.
+
+---
+
+# Guía técnica
+
 ## Stack
 
-- React Native + Expo SDK 58 + TypeScript
-- Expo Router (5 pestañas: Inicio, Catálogo, Inventario, Pedidos, Reportes)
-- Supabase (Postgres, Auth, Storage, Realtime)
-- Zustand (carrito)
-- react-native-gifted-charts (gráficos)
-- EAS Build (APK)
+- React Native + Expo SDK 58 + TypeScript, Expo Router (pestañas Inicio, Catálogo, Inventario, Pedidos, Reportes)
+- Firebase: Authentication (correo y contraseña) y Cloud Firestore
+- Cloudinary (plan gratis, upload preset sin firma) para fotos de productos
+- Zustand (carrito), react-native-gifted-charts (gráficos)
+- EAS Build para el APK
 
-> **Migración a Firebase en curso.** La autenticación y los perfiles ya usan Firebase (fase 1); el resto de módulos se migra por fases. Mientras tanto, los pasos de Supabase siguen aplicando para catálogo, ventas e inventario.
+## Configuración inicial
 
-## 0. Configurar Firebase (Auth + Firestore)
+1. **Firebase** ([console.firebase.google.com](https://console.firebase.google.com), plan gratuito Spark):
+   - *Authentication > Sign-in method*: habilita **Correo electrónico/contraseña**.
+   - *Firestore Database*: crea la base en modo producción.
+   - *Configuración del proyecto > Tus apps > App web*: copia `firebaseConfig`.
+2. **Cloudinary**: crea un *upload preset* **sin firma** (unsigned) con carpeta `melastock/productos`.
+3. Copia `.env.example` a `.env` y completa `EXPO_PUBLIC_FIREBASE_*`, `EXPO_PUBLIC_CLOUDINARY_*` y los datos del negocio para la boleta.
+4. `npm install`
 
-1. Crea un proyecto en [console.firebase.google.com](https://console.firebase.google.com) (plan gratuito Spark basta).
-2. **Authentication > Sign-in method**: habilita *Correo electrónico/contraseña*.
-3. **Firestore Database > Crear base de datos** en modo producción (las reglas se despliegan desde el repo).
-4. **Configuración del proyecto > Tus apps > Agregar app web**: copia el objeto `firebaseConfig` a tu `.env` con el prefijo `EXPO_PUBLIC_FIREBASE_*` (ver `.env.example`).
-5. Despliega reglas e índices:
+## Reglas e índices de Firestore
 
-   ```bash
-   npm i -g firebase-tools
-   firebase login
-   firebase use TU-PROYECTO
-   firebase deploy --only firestore
-   ```
+Las reglas (`firestore.rules`) validan cada operación: el stock solo cambia junto con un movimiento del kardex, el correlativo de boletas y pedidos solo sube junto con su documento, y el resumen diario solo cambia con una venta, anulación o pago nuevo (comprobado con `getAfter()`/`existsAfter()` en la misma transacción).
 
-6. **Primer usuario admin** (hasta que exista el script de datos de prueba de la fase 7):
-   - En *Authentication > Users > Add user* crea el correo y la contraseña.
-   - En *Firestore* crea el documento `perfiles/{uid}` (el uid aparece en la lista de usuarios) con los campos:
-     `nombre` (string), `email` (string), `rol` = `"admin"` (string), `activo` = `true` (boolean).
-   - Desde ese momento, los demás usuarios se crean dentro de la app en **Perfil > Gestionar usuarios**.
+```bash
+npm i -g firebase-tools
+firebase login
+npm run deploy:reglas          # = firebase deploy --only firestore (reglas + índices)
+npm run test:reglas            # 71 pruebas en el emulador
+```
 
-   Un usuario que exista solo en Authentication (creado en la consola o registrado por su cuenta) obtiene al iniciar sesión un perfil de **vendedor inactivo** y ve la pantalla "Tu cuenta está pendiente de aprobación". Solo puede usar la app cuando un admin lo aprueba en **Perfil > Gestionar usuarios**. Las reglas de Firestore impiden que un usuario se cree un perfil activo o se cambie el rol a sí mismo.
+`npm run test:reglas` necesita Java 11+ en el PATH. En Windows sirve el JDK de Android Studio:
 
-## 1. Configurar Supabase (backend anterior, se retira en la fase 7)
+```bash
+export PATH="/c/Program Files/Android/Android Studio/jbr/bin:$PATH"   # Git Bash
+```
 
-1. Crea un proyecto en [supabase.com](https://supabase.com).
-2. Abre **SQL Editor** y ejecuta, en este orden:
-   - `supabase/schema.sql` (tablas, funciones, RLS, realtime y bucket de fotos)
-   - `supabase/seed.sql` (categorías, productos y materiales de ejemplo; opcional)
-3. Crea los usuarios en **Authentication > Users > Add user** (email + contraseña, marca "Auto Confirm User").
-   En *User Metadata* puedes poner el nombre que verá el saludo: `{"full_name": "Carlos"}`.
-4. Para convertir un usuario en administrador, ejecuta en SQL Editor:
+Prueba siempre las reglas antes de desplegarlas.
 
-   ```sql
-   update public.profiles set role = 'admin' where id = '<uuid del usuario>';
-   ```
+## Cuenta de servicio (para los scripts)
 
-   Los usuarios nuevos son `vendedor` por defecto.
+Los scripts de `scripts/` usan `firebase-admin`, que necesita una clave privada:
 
-| Rol | Permisos |
+1. Firebase Console → ⚙ **Configuración del proyecto** → pestaña **Cuentas de servicio**.
+2. Con *Node.js* seleccionado, toca **Generar nueva clave privada** → **Generar clave**.
+3. Se descarga un `.json`. Renómbralo a `serviceAccount.json` y muévelo a la **raíz del proyecto** (junto a `package.json`).
+
+`serviceAccount.json` está en `.gitignore`. **Nunca lo subas a GitHub ni lo compartas**: da acceso total a la base de datos sin pasar por las reglas. Si se filtra, bórralo en *Google Cloud Console > IAM > Cuentas de servicio > Claves* y genera otro.
+
+## Scripts de administración
+
+Todos piden escribir el ID del proyecto antes de modificar datos.
+
+| Comando | Qué hace |
 | --- | --- |
-| vendedor | Registrar ventas, cambiar estado de pedidos, ver inventario y registrar movimientos de materiales |
-| admin | Todo lo anterior + crear/editar/eliminar productos y materiales, cancelar ventas (devuelve stock) |
+| `npm run seed` | Carga datos de demostración: catálogo, materiales, proveedores, clientes, 30 días de ventas con kardex y resúmenes, y pedidos a medida en todas las etapas. Requiere la base vacía. |
+| `npm run seed -- --admin-email correo --admin-password clave --admin-nombre "Nombre"` | Igual, y además crea (o promueve) ese usuario como **administrador**. |
+| `npm run reset` | Borra ventas, pedidos, kardex, resúmenes y clientes, y reinicia los correlativos (próxima boleta `B001-00000001`, próximo pedido `P-0001`). Pregunta si borrar también el catálogo. Los usuarios no se tocan. |
+| `npm run reset -- --todo` | Lo anterior y además productos, categorías, materiales y proveedores. |
+| `npm run reset -- --conservar-catalogo` | Solo operación; el stock actual queda como "Stock inicial" en el kardex nuevo. |
+| `npm run backup` | Guarda todas las colecciones en `backups/melastock-AAAA-MM-DD.json`. |
+| `npm run restore` | Restaura el respaldo más reciente (o `npm run restore -- backups/archivo.json`). Reemplaza el contenido de las colecciones; con `--combinar` solo sobrescribe los documentos del respaldo. |
 
-## 2. Variables de entorno
+**Antes de entregar la app al cliente:** `npm run backup` → `npm run reset` (elige si conservar el catálogo) → crea su usuario administrador.
+
+**Primer administrador** (si no usas `--admin-email`): créalo en *Authentication > Users > Add user* y en *Firestore* crea `perfiles/{uid}` con `nombre` (texto), `email` (texto), `rol` = `"admin"` y `activo` = `true`.
+
+## Respaldos
+
+- Haz `npm run backup` al menos una vez por semana y antes de cualquier `reset` o `restore`.
+- La carpeta `backups/` está en `.gitignore` porque contiene datos de clientes. Copia los archivos a un lugar seguro (Drive, USB).
+- Los respaldos incluyen los perfiles pero **no** las cuentas de acceso (correo y contraseña de Authentication).
+
+## Desarrollo
 
 ```bash
-cp .env.example .env
+npx eas-cli@latest build -p android --profile development   # una vez, o al agregar módulos nativos
+npm run dev                                                  # expo start --dev-client
+npm run typecheck && npm run lint
 ```
 
-Completa `EXPO_PUBLIC_SUPABASE_URL` y `EXPO_PUBLIC_SUPABASE_ANON_KEY` (Dashboard > Project Settings > API).
-Opcionalmente `EXPO_PUBLIC_BUSINESS_NAME`, `EXPO_PUBLIC_BUSINESS_PHONE` y `EXPO_PUBLIC_BUSINESS_ADDRESS` para la cabecera de la boleta de WhatsApp.
-
-## 3. Ejecutar en desarrollo
+## APK para producción
 
 ```bash
-npm install
-npx expo start
-```
-
-La app usa módulos nativos (image picker, date picker, svg), así que necesita un **development build** en lugar de Expo Go:
-
-```bash
-npx eas-cli@latest build -p android --profile development
-```
-
-Instala el APK resultante en el teléfono y luego `npx expo start` para conectarte.
-
-## 4. Generar el APK
-
-```bash
-npx eas-cli@latest login
 npx eas-cli@latest build -p android --profile preview
 ```
 
-El perfil `preview` de `eas.json` genera un `.apk` instalable directamente (no `.aab`). Agrega las variables de entorno al proyecto EAS antes de compilar:
-
-```bash
-npx eas-cli@latest env:create --scope project --name EXPO_PUBLIC_SUPABASE_URL --value https://xxx.supabase.co --environment preview
-npx eas-cli@latest env:create --scope project --name EXPO_PUBLIC_SUPABASE_ANON_KEY --value eyJ... --environment preview
-```
-
-## Scripts
-
-| Comando | Descripción |
-| --- | --- |
-| `npm start` | Servidor de desarrollo |
-| `npm run typecheck` | `tsc --noEmit` |
-| `npm run lint` | ESLint |
-| `npm run build:apk` | `eas build -p android --profile preview` |
+Antes, carga las variables `EXPO_PUBLIC_*` en EAS (*expo.dev > proyecto > Environment variables*) o con `eas env:create`.
 
 ## Estructura
 
 ```
 src/
-  app/                 Rutas (Expo Router)
-    _layout.tsx        Proveedores + guardas de autenticación
-    login.tsx
-    (tabs)/            Inicio, Catálogo, Inventario, Pedidos, Reportes
-    venta/nueva.tsx    Carrito y cobro
-    venta/exito.tsx    "¡Venta registrada!" + boleta por WhatsApp
-    venta/[id].tsx     Detalle de venta / pedido
-    ventas.tsx         Historial de ventas
-    producto/[id].tsx  Detalle (vendedor) / editor (admin). id = "nuevo" para crear
-    material/[id].tsx  Stock, movimientos y editor de material
-    perfil.tsx
-  components/          UI base, tarjetas, toast, selector de fecha
-  hooks/               useAuth, useQuery (foco + realtime)
-  lib/                 supabase, formato (S/, fechas Lima), boleta WhatsApp, storage
-  store/cart.ts        Carrito (Zustand)
-  types/db.ts          Tipos de la base de datos
-supabase/
-  schema.sql           Esquema completo
-  seed.sql             Datos de ejemplo
+  app/            Pantallas (Expo Router): (tabs)/, venta/, pedido/, producto/, material/,
+                  proveedor/, caja, kardex, categorias, usuarios, perfil, login, pendiente
+  components/     UI base, tarjetas, modales
+  services/       Acceso a datos (las pantallas no llaman a Firestore directamente)
+    *-core.ts     Transacciones sin dependencias de React Native (probadas en el emulador)
+  hooks/          useAuth, useRealtime (onSnapshot), useAsync
+  lib/            firebase (core / web / nativo), formato S/ y fechas de Lima, boleta WhatsApp
+  types/db.ts     Modelo de datos
+scripts/          seed, reset, backup, restore, test-reglas
+firestore.rules   Reglas de seguridad
+firestore.indexes.json
 ```
 
-## Notas de diseño
+## Modelo de datos (Firestore)
 
-- **Boleta correlativa y stock**: la venta se registra con la función SQL `create_sale`, que en una sola transacción genera el número `B001-00000001`, valida y descuenta el stock e inserta los ítems. La serie se puede cambiar en la tabla `receipt_counter`.
-- **Pedidos**: toda venta con fecha de entrega nace como pedido `pendiente` y avanza por `en_produccion` → `listo` → `entregado`. Una venta sin fecha de entrega se registra directamente como `entregado`.
-- **Zona horaria**: todos los cálculos de "hoy" y "este mes" usan America/Lima (UTC-5, sin horario de verano).
-- **Tiempo real**: el panel de inicio, pedidos y reportes se actualizan al instante con Supabase Realtime sobre `sales` y `products`.
+Montos de ventas, pedidos y resúmenes en **céntimos enteros**. Fechas en hora de Lima (`dia` = `YYYY-MM-DD`).
+
+| Colección | Contenido |
+| --- | --- |
+| `perfiles/{uid}` | nombre, email, rol (`admin`/`vendedor`), activo |
+| `categorias` | nombre, icono, orden |
+| `productos` | precio, costo, stock, stockMinimo, fotoUrl, categoría (nombre desnormalizado), ultimoMovimientoId |
+| `materiales` | tipo, color, espesor, unidad, stock, stockMinimo, ultimoCosto, proveedor |
+| `proveedores` | nombre, teléfono, contacto, dirección, notas |
+| `movimientos` | kardex: entrada/salida/ajuste de producto o material, stock anterior y nuevo, usuario, venta o pedido relacionado |
+| `clientes` | nombre, teléfono (id `tel-<9 dígitos>`), dirección |
+| `ventas` | boleta, cliente, vendedor, ítems embebidos, pago, delivery, descuento, totales, entrega |
+| `pedidos` | pedidos a medida: etapa, historial de etapas, pagos, saldo, costo de materiales, diasPago |
+| `contadores/boletas`, `contadores/pedidos` | correlativos |
+| `resumen_diario/{dia}` | ventas, costo, unidades y pagos de pedidos del día, con desglose por método |
