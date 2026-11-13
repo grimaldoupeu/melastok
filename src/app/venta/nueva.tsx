@@ -87,7 +87,7 @@ export default function NewSaleScreen() {
     const { data, error } = await supabase.rpc('create_sale', {
       p_customer_name: customerName.trim(),
       p_customer_phone: customerPhone.trim() || null,
-      p_items: items.map((i) => ({ product_id: i.product.id, quantity: i.quantity })),
+      p_items: items.map((i) => ({ product_id: i.producto.id, quantity: i.cantidad })),
       p_payment_method: payment,
       p_discount: discountN,
       p_delivery_cost: deliveryN,
@@ -116,25 +116,25 @@ export default function NewSaleScreen() {
             {/* Carrito */}
             <Card style={{ gap: Spacing.sm, paddingVertical: Spacing.sm }}>
               {items.map((it, idx) => (
-                <View key={it.product.id}>
+                <View key={it.producto.id}>
                   <View style={styles.cartRow}>
-                    <ProductImage uri={it.product.image_url} size={48} />
+                    <ProductImage uri={it.producto.fotoUrl} size={48} />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.cartName} numberOfLines={2}>
-                        {it.product.name}
+                        {it.producto.nombre}
                       </Text>
                       <Text style={styles.cartMeta}>
-                        {soles(it.product.price)} c/u · {it.product.stock} disp.
+                        {soles(it.producto.precio)} c/u · {it.producto.stock} disp.
                       </Text>
                     </View>
                     <View style={{ alignItems: 'flex-end', gap: 6 }}>
-                      <Text style={styles.cartTotal}>{soles(Number(it.product.price) * it.quantity)}</Text>
+                      <Text style={styles.cartTotal}>{soles(Number(it.producto.precio) * it.cantidad)}</Text>
                       <Stepper
                         size="sm"
-                        value={it.quantity}
-                        max={it.product.stock}
-                        onIncrement={() => increment(it.product.id) === 'sin_stock' && toast.show('No hay más stock disponible', 'error')}
-                        onDecrement={() => decrement(it.product.id)}
+                        value={it.cantidad}
+                        max={it.producto.stock}
+                        onIncrement={() => increment(it.producto.id) === 'sin_stock' && toast.show('No hay más stock disponible', 'error')}
+                        onDecrement={() => decrement(it.producto.id)}
                       />
                     </View>
                   </View>

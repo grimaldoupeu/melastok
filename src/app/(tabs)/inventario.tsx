@@ -8,20 +8,19 @@ import { Badge, Banner, Chip, EmptyState, ErrorView, Header, IconButton, Loading
 import { Colors, FontSize, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/hooks/use-auth';
 import { useQuery } from '@/hooks/use-query';
+import { useRealtime } from '@/hooks/use-realtime';
 import { qty, soles } from '@/lib/format';
 import { supabase } from '@/lib/supabase';
-import { MATERIAL_TYPES, type Material, type MaterialType, type Product } from '@/types/db';
+import { observarProductos } from '@/services/productos';
+import { MATERIAL_TYPES, type Material, type MaterialType, type Producto } from '@/types/db';
 
 type Tab = 'productos' | 'materiales';
 
-async function fetchInventory() {
-  const [prods, mats] = await Promise.all([
-    supabase.from('products').select('*, categories(id,name,icon)').order('name'),
-    supabase.from('materials').select('*').order('type').order('name'),
-  ]);
-  if (prods.error) throw prods.error;
+// Materiales: todavía en Supabase (se migran en la fase 4)
+async function fetchMaterials() {
+  const mats = await supabase.from('materials').select('*').order('type').order('name');
   if (mats.error) throw mats.error;
-  return { products: (prods.data ?? []) as Product[], materials: (mats.data ?? []) as Material[] };
+  return (mats.data ?? []) as Material[];
 }
 
 function MaterialRow({ material, onPress }: { material: Material; onPress: () => void }) {
@@ -57,23 +56,23 @@ function MaterialRow({ material, onPress }: { material: Material; onPress: () =>
   );
 }
 
-function ProductRow({ product, onPress }: { product: Product; onPress: () => void }) {
+function ProductRow({ producto, onPress }: { producto: Producto; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.prodRow, pressed && { opacity: 0.85 }]}>
-      <ProductImage uri={product.image_url} size={52} />
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.prodRow, pressed && { opacity: 0.85 }, !producto.activo && { opacity: 0.6 }]}>
+      <ProductImage uri={producto.fotoUrl} size={52} />
       <View style={{ flex: 1, gap: 3 }}>
         <Text style={styles.matName} numberOfLines={1}>
-          {product.name}
+          {producto.nombre}
         </Text>
         <Text style={styles.matMeta}>
-          {product.categories?.name ?? 'Sin categoría'} · {soles(product.price)}
-          {!product.active ? ' · Inactivo' : ''}
+          {producto.categoriaNombre ?? 'Sin categoría'} · {soles(producto.precio)}
+          {!producto.activo ? ' · Oculto' : ''}
         </Text>
-        <StockBadge stock={product.stock} min={product.min_stock} />
+        <StockBadge stock={producto.stock} min={producto.stockMinimo} />
       </View>
       <View style={{ alignItems: 'flex-end' }}>
-        <Text style={styles.matStock}>{product.stock}</Text>
-        <Text style={styles.matMeta}>mín. {product.min_stock}</Text>
+        <Text style={styles.matStock}>{producto.stock}</Text>
+        <Text style={styles.matMeta}>mín. {producto.stockMinimo}</Text>
       </View>
     </Pressable>
   );
@@ -86,26 +85,30 @@ export default function InventoryScreen() {
   const [search, setSearch] = useState('');
   const [type, setType] = useState<MaterialType | null>(null);
   const [onlyLow, setOnlyLow] = useState(false);
-  const { data, loading, error, refreshing, refresh, refetch } = useQuery(fetchInventory, [], { realtimeTables: ['products'] });
+  const productosRt = useRealtime(observarProductos);
+  const { data: materialsData, loading, error, refreshing, refresh, refetch } = useQuery(fetchMaterials, []);
 
   const q = search.trim().toLowerCase();
   const products = useMemo(
-    () => (data?.products ?? []).filter((p) => (!q || p.name.toLowerCase().includes(q)) && (!onlyLow || p.stock <= p.min_stock)),
-    [data, q, onlyLow]
+    () =>
+      (productosRt.data ?? []).filter(
+        (p) => (!q || p.nombre.toLowerCase().includes(q) || p.categoriaNombre?.toLowerCase().includes(q)) && (!onlyLow || p.stock <= p.stockMinimo)
+      ),
+    [productosRt.data, q, onlyLow]
   );
   const materials = useMemo(
     () =>
-      (data?.materials ?? []).filter(
+      (materialsData ?? []).filter(
         (m) =>
           (type === null || m.type === type) &&
           (!q || m.name.toLowerCase().includes(q) || m.color?.toLowerCase().includes(q)) &&
           (!onlyLow || Number(m.stock) <= Number(m.min_stock))
       ),
-    [data, q, type, onlyLow]
+    [materialsData, q, type, onlyLow]
   );
 
-  const lowProducts = (data?.products ?? []).filter((p) => p.active && p.stock <= p.min_stock).length;
-  const lowMaterials = (data?.materials ?? []).filter((m) => Number(m.stock) <= Number(m.min_stock)).length;
+  const lowProducts = (productosRt.data ?? []).filter((p) => p.activo && p.stock <= p.stockMinimo).length;
+  const lowMaterials = (materialsData ?? []).filter((m) => Number(m.stock) <= Number(m.min_stock)).length;
   const lowCount = tab === 'productos' ? lowProducts : lowMaterials;
 
   const addRoute = tab === 'productos' ? { pathname: '/producto/[id]' as const, params: { id: 'nuevo' } } : { pathname: '/material/[id]' as const, params: { id: 'nuevo' } };
@@ -114,7 +117,7 @@ export default function InventoryScreen() {
     <Screen>
       <Header
         title="Inventario"
-        subtitle={data ? `${data.products.length} productos · ${data.materials.length} materiales` : undefined}
+        subtitle={productosRt.data ? `${productosRt.data.length} productos · ${materialsData?.length ?? 0} materiales` : undefined}
         right={isAdmin ? <IconButton icon="add" bg={Colors.primary} color={Colors.white} onPress={() => router.push(addRoute)} /> : undefined}
       />
 
@@ -160,19 +163,24 @@ export default function InventoryScreen() {
         ) : null}
       </View>
 
-      {loading && !data ? (
+      {tab === 'productos' ? (
+        productosRt.loading ? (
+          <LoadingView />
+        ) : productosRt.error ? (
+          <ErrorView message={productosRt.error} />
+        ) : (
+          <FlatList
+            data={products}
+            keyExtractor={(p) => p.id}
+            contentContainerStyle={styles.list}
+            ListEmptyComponent={<EmptyState icon="cube-outline" title="Sin productos" description={onlyLow ? 'Ningún producto con stock bajo. ¡Bien!' : 'No hay productos que coincidan.'} />}
+            renderItem={({ item }) => <ProductRow producto={item} onPress={() => router.push({ pathname: '/producto/[id]', params: { id: item.id } })} />}
+          />
+        )
+      ) : loading && !materialsData ? (
         <LoadingView />
-      ) : error && !data ? (
+      ) : error && !materialsData ? (
         <ErrorView message={error} onRetry={refetch} />
-      ) : tab === 'productos' ? (
-        <FlatList
-          data={products}
-          keyExtractor={(p) => p.id}
-          contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={Colors.primary} />}
-          ListEmptyComponent={<EmptyState icon="cube-outline" title="Sin productos" description={onlyLow ? 'Ningún producto con stock bajo. ¡Bien!' : 'No hay productos que coincidan.'} />}
-          renderItem={({ item }) => <ProductRow product={item} onPress={() => router.push({ pathname: '/producto/[id]', params: { id: item.id } })} />}
-        />
       ) : (
         <FlatList
           data={materials}

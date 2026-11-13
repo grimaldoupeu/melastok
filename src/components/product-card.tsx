@@ -5,13 +5,15 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Badge } from '@/components/ui';
 import { Colors, FontSize, Radius, Shadow, Spacing } from '@/constants/theme';
 import { soles } from '@/lib/format';
-import type { Product } from '@/types/db';
+import { miniatura } from '@/services/imagenes';
+import type { Producto } from '@/types/db';
 
 /** Imagen de producto. `size` numérico = cuadrado fijo; 'full' = ancho completo con proporción 1:1 */
 export function ProductImage({ uri, size, radius = Radius.md }: { uri: string | null; size: number | 'full'; radius?: number }) {
   const box = size === 'full' ? { width: '100%' as const, aspectRatio: 1 } : { width: size, height: size };
-  if (uri) {
-    return <Image source={{ uri }} style={[box, { borderRadius: radius, backgroundColor: Colors.primarySoft }]} contentFit="cover" transition={150} />;
+  const src = miniatura(uri, size === 'full' ? 600 : Math.max(120, Math.round(size * 3)));
+  if (src) {
+    return <Image source={{ uri: src }} style={[box, { borderRadius: radius, backgroundColor: Colors.primarySoft }]} contentFit="cover" transition={150} />;
   }
   return (
     <View style={[box, { borderRadius: radius, backgroundColor: Colors.primarySoft, alignItems: 'center', justifyContent: 'center' }]}>
@@ -28,40 +30,40 @@ export function StockBadge({ stock, min }: { stock: number; min: number }) {
 
 /** Tarjeta de producto para el catálogo (grilla de 2 columnas) */
 export function ProductCard({
-  product,
+  producto,
   inCart,
   onAdd,
   onPress,
   onEdit,
 }: {
-  product: Product;
+  producto: Producto;
   inCart: number;
   onAdd: () => void;
   onPress?: () => void;
   onEdit?: () => void;
 }) {
-  const out = product.stock <= 0;
+  const out = producto.stock <= 0;
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.card, pressed && { opacity: 0.9 }]}>
       <View>
-        <ProductImage uri={product.image_url} size="full" radius={Radius.md} />
+        <ProductImage uri={producto.fotoUrl} size="full" radius={Radius.md} />
         {onEdit ? (
           <Pressable onPress={onEdit} hitSlop={8} style={styles.editBtn}>
             <Ionicons name="pencil" size={14} color={Colors.primary} />
           </Pressable>
         ) : null}
-        {product.categories?.name ? (
+        {producto.categoriaNombre ? (
           <View style={styles.catTag}>
-            <Text style={styles.catText}>{product.categories.name}</Text>
+            <Text style={styles.catText}>{producto.categoriaNombre}</Text>
           </View>
         ) : null}
       </View>
       <Text style={styles.name} numberOfLines={2}>
-        {product.name}
+        {producto.nombre}
       </Text>
-      <StockBadge stock={product.stock} min={product.min_stock} />
+      <StockBadge stock={producto.stock} min={producto.stockMinimo} />
       <View style={styles.footer}>
-        <Text style={styles.price}>{soles(product.price)}</Text>
+        <Text style={styles.price}>{soles(producto.precio)}</Text>
         <Pressable
           onPress={onAdd}
           disabled={out}

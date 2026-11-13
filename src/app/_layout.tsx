@@ -49,6 +49,7 @@ function RootNavigator() {
         <Stack.Screen name="material/[id]" options={{ presentation: 'modal' }} />
         <Stack.Screen name="perfil" options={{ presentation: 'modal' }} />
         <Stack.Screen name="usuarios" />
+        <Stack.Screen name="categorias" />
       </Stack.Protected>
     </Stack>
   );

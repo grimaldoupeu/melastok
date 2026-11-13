@@ -20,7 +20,10 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "permissions": ["android.permission.CAMERA", "android.permission.READ_MEDIA_IMAGES"]
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES"
+      ]
     },
     "ios": {
       "bundleIdentifier": "com.gamastudio.melastock",
@@ -56,7 +59,15 @@
     },
     "extra": {
       "developer": "GAMA Studio",
-      "eas": {}
-    }
+      "eas": {
+        "projectId": "04efdc50-575c-479a-a331-6758d1348119"
+      },
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      }
+    },
+    "owner": "grimaldoa"
   }
 }

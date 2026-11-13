@@ -1,76 +1,85 @@
 import { create } from 'zustand';
 
-import type { Product } from '@/types/db';
+import type { Producto } from '@/types/db';
 
 export type CartItem = {
-  product: Product;
-  quantity: number;
+  producto: Producto;
+  cantidad: number;
 };
 
 type CartState = {
   items: CartItem[];
-  add: (product: Product, quantity?: number) => 'ok' | 'sin_stock';
-  remove: (productId: string) => void;
-  setQuantity: (productId: string, quantity: number) => void;
-  increment: (productId: string) => 'ok' | 'sin_stock';
-  decrement: (productId: string) => void;
+  add: (producto: Producto, cantidad?: number) => 'ok' | 'sin_stock';
+  remove: (productoId: string) => void;
+  setQuantity: (productoId: string, cantidad: number) => void;
+  increment: (productoId: string) => 'ok' | 'sin_stock';
+  decrement: (productoId: string) => void;
+  /** Actualiza precio/stock de los productos del carrito con datos frescos del catálogo */
+  sync: (productos: Producto[]) => void;
   clear: () => void;
 };
 
 export const useCart = create<CartState>((set, get) => ({
   items: [],
 
-  add: (product, quantity = 1) => {
+  add: (producto, cantidad = 1) => {
     const items = get().items;
-    const existing = items.find((i) => i.product.id === product.id);
-    const current = existing?.quantity ?? 0;
-    if (current + quantity > product.stock) return 'sin_stock';
+    const existing = items.find((i) => i.producto.id === producto.id);
+    const current = existing?.cantidad ?? 0;
+    if (current + cantidad > producto.stock) return 'sin_stock';
     if (existing) {
       set({
-        items: items.map((i) =>
-          i.product.id === product.id ? { ...i, quantity: i.quantity + quantity, product } : i
-        ),
+        items: items.map((i) => (i.producto.id === producto.id ? { ...i, cantidad: i.cantidad + cantidad, producto } : i)),
       });
     } else {
-      set({ items: [...items, { product, quantity }] });
+      set({ items: [...items, { producto, cantidad }] });
     }
     return 'ok';
   },
 
-  remove: (productId) => set({ items: get().items.filter((i) => i.product.id !== productId) }),
+  remove: (productoId) => set({ items: get().items.filter((i) => i.producto.id !== productoId) }),
 
-  setQuantity: (productId, quantity) => {
-    if (quantity <= 0) {
-      get().remove(productId);
+  setQuantity: (productoId, cantidad) => {
+    if (cantidad <= 0) {
+      get().remove(productoId);
       return;
     }
     set({
-      items: get().items.map((i) =>
-        i.product.id === productId ? { ...i, quantity: Math.min(quantity, i.product.stock) } : i
-      ),
+      items: get().items.map((i) => (i.producto.id === productoId ? { ...i, cantidad: Math.min(cantidad, i.producto.stock) } : i)),
     });
   },
 
-  increment: (productId) => {
-    const item = get().items.find((i) => i.product.id === productId);
+  increment: (productoId) => {
+    const item = get().items.find((i) => i.producto.id === productoId);
     if (!item) return 'sin_stock';
-    if (item.quantity + 1 > item.product.stock) return 'sin_stock';
-    get().setQuantity(productId, item.quantity + 1);
+    if (item.cantidad + 1 > item.producto.stock) return 'sin_stock';
+    get().setQuantity(productoId, item.cantidad + 1);
     return 'ok';
   },
 
-  decrement: (productId) => {
-    const item = get().items.find((i) => i.product.id === productId);
+  decrement: (productoId) => {
+    const item = get().items.find((i) => i.producto.id === productoId);
     if (!item) return;
-    get().setQuantity(productId, item.quantity - 1);
+    get().setQuantity(productoId, item.cantidad - 1);
+  },
+
+  sync: (productos) => {
+    const byId = new Map(productos.map((p) => [p.id, p]));
+    set({
+      items: get()
+        .items.map((i) => {
+          const fresh = byId.get(i.producto.id);
+          if (!fresh || !fresh.activo) return null;
+          return { producto: fresh, cantidad: Math.min(i.cantidad, fresh.stock) };
+        })
+        .filter((i): i is CartItem => !!i && i.cantidad > 0),
+    });
   },
 
   clear: () => set({ items: [] }),
 }));
 
 /** Selectores derivados */
-export const selectCartCount = (s: CartState) => s.items.reduce((n, i) => n + i.quantity, 0);
-export const selectCartSubtotal = (s: CartState) =>
-  s.items.reduce((n, i) => n + i.quantity * Number(i.product.price), 0);
-export const selectQuantityOf = (productId: string) => (s: CartState) =>
-  s.items.find((i) => i.product.id === productId)?.quantity ?? 0;
+export const selectCartCount = (s: CartState) => s.items.reduce((n, i) => n + i.cantidad, 0);
+export const selectCartSubtotal = (s: CartState) => s.items.reduce((n, i) => n + i.cantidad * Number(i.producto.precio), 0);
+export const selectQuantityOf = (productoId: string) => (s: CartState) => s.items.find((i) => i.producto.id === productoId)?.cantidad ?? 0;

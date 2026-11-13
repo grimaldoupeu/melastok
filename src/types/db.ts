@@ -14,6 +14,60 @@ export type Perfil = {
   creadoEn: Date | null;
 };
 
+/** Documento de la colección "categorias" */
+export type Categoria = {
+  id: string;
+  nombre: string;
+  icono: string; // nombre de Ionicons
+  orden: number;
+};
+
+/** Documento de la colección "productos" */
+export type Producto = {
+  id: string;
+  nombre: string;
+  descripcion: string | null;
+  categoriaId: string | null;
+  categoriaNombre: string | null; // desnormalizado
+  precio: number;
+  costo: number | null;
+  stock: number;
+  stockMinimo: number;
+  fotoUrl: string | null;
+  activo: boolean;
+  creadoEn: Date | null;
+  actualizadoEn: Date | null;
+};
+
+/** Íconos disponibles para categorías (Ionicons) */
+export const CATEGORIA_ICONOS = [
+  'shirt-outline',
+  'albums-outline',
+  'restaurant-outline',
+  'desktop-outline',
+  'bed-outline',
+  'library-outline',
+  'moon-outline',
+  'tv-outline',
+  'file-tray-stacked-outline',
+  'home-outline',
+  'grid-outline',
+  'cube-outline',
+] as const;
+
+/** Categorías sugeridas para un catálogo vacío */
+export const CATEGORIAS_SUGERIDAS: { nombre: string; icono: string }[] = [
+  { nombre: 'Roperos', icono: 'shirt-outline' },
+  { nombre: 'Cómodas', icono: 'albums-outline' },
+  { nombre: 'Cocinas', icono: 'restaurant-outline' },
+  { nombre: 'Escritorios', icono: 'desktop-outline' },
+  { nombre: 'Camas', icono: 'bed-outline' },
+  { nombre: 'Estantes', icono: 'library-outline' },
+  { nombre: 'Veladores', icono: 'moon-outline' },
+  { nombre: 'Centros de TV', icono: 'tv-outline' },
+  { nombre: 'Otros', icono: 'cube-outline' },
+];
+
 /* ------------------------------------------------------------------ */
 /* Supabase (en migración; se eliminará en la fase 7)                  */
 /* ------------------------------------------------------------------ */

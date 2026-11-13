@@ -82,6 +82,76 @@ service cloud.firestore {
     }
 
     // ------------------------------------------------------------------
+    // Helpers de validación de campos
+    // ------------------------------------------------------------------
+    function esTextoOpcional(v) {
+      return v == null || v is string;
+    }
+
+    function esNumeroOpcional(v) {
+      return v == null || (v is number && v >= 0);
+    }
+
+    function esEnteroNoNegativo(v) {
+      return v is int && v >= 0;
+    }
+
+    // ------------------------------------------------------------------
+    // categorias/{id}  — lectura: usuarios activos; escritura: admin
+    // ------------------------------------------------------------------
+    function categoriaValida(d) {
+      return d.keys().hasOnly(['nombre', 'icono', 'orden'])
+        && d.nombre is string && d.nombre.size() >= 2 && d.nombre.size() <= 60
+        && d.icono is string
+        && d.orden is number;
+    }
+
+    match /categorias/{id} {
+      allow read: if esUsuarioActivo();
+      allow create: if esAdmin() && categoriaValida(request.resource.data);
+      allow update: if esAdmin() && categoriaValida(request.resource.data);
+      allow delete: if esAdmin();
+    }
+
+    // ------------------------------------------------------------------
+    // productos/{id}
+    //   lectura: usuarios activos
+    //   crear / borrar / editar datos: admin
+    //   el stock SOLO cambia: (a) por el admin, (b) por una venta de un
+    //   usuario activo, que únicamente puede DISMINUIRLO (fase 3).
+    // ------------------------------------------------------------------
+    function productoValido(d) {
+      return d.keys().hasOnly(['nombre', 'descripcion', 'categoriaId', 'categoriaNombre', 'precio', 'costo',
+                               'stock', 'stockMinimo', 'fotoUrl', 'activo', 'creadoEn', 'actualizadoEn'])
+        && d.nombre is string && d.nombre.size() >= 2 && d.nombre.size() <= 120
+        && esTextoOpcional(d.descripcion)
+        && esTextoOpcional(d.categoriaId)
+        && esTextoOpcional(d.categoriaNombre)
+        && d.precio is number && d.precio >= 0
+        && esNumeroOpcional(d.costo)
+        && esEnteroNoNegativo(d.stock)
+        && esEnteroNoNegativo(d.stockMinimo)
+        && esTextoOpcional(d.fotoUrl)
+        && d.activo is bool;
+    }
+
+    match /productos/{id} {
+      allow read: if esUsuarioActivo();
+      allow create: if esAdmin() && productoValido(request.resource.data);
+      allow delete: if esAdmin();
+      allow update: if productoValido(request.resource.data) && (
+          esAdmin()
+          || (
+            // Venta: solo baja el stock, nunca por debajo de 0, sin tocar otros campos
+            esUsuarioActivo()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'actualizadoEn'])
+            && request.resource.data.stock < resource.data.stock
+            && request.resource.data.stock >= 0
+          )
+        );
+    }
+
+    // ------------------------------------------------------------------
     // Resto de colecciones: por defecto denegado hasta su fase.
     // Al agregarlas, toda lectura/escritura debe partir de esUsuarioActivo()
     // (o esAdmin(), que ya implica activo == true).

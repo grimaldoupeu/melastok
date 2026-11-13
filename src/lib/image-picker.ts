@@ -1,9 +1,4 @@
-import { decode } from 'base64-arraybuffer';
 import * as ImagePicker from 'expo-image-picker';
-
-import { supabase } from '@/lib/supabase';
-
-const BUCKET = 'productos';
 
 export type PickedImage = {
   uri: string;
@@ -41,17 +36,4 @@ export async function pickProductImage(source: 'galeria' | 'camara'): Promise<Pi
     base64: asset.base64,
     mimeType: asset.mimeType || 'image/jpeg',
   };
-}
-
-/** Sube la imagen al bucket público y devuelve la URL pública */
-export async function uploadProductImage(image: PickedImage, productId: string): Promise<string> {
-  const ext = image.mimeType.includes('png') ? 'png' : image.mimeType.includes('webp') ? 'webp' : 'jpg';
-  const path = `${productId}/${Date.now()}.${ext}`;
-  const { error } = await supabase.storage.from(BUCKET).upload(path, decode(image.base64), {
-    contentType: image.mimeType,
-    upsert: true,
-  });
-  if (error) throw error;
-  const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
-  return data.publicUrl;
 }
