@@ -1,46 +1,45 @@
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { FlatList, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { FlatList, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { SaleRow } from '@/components/sale-card';
 import { Card, Chip, EmptyState, ErrorView, Header, LoadingView, Screen, SearchBar } from '@/components/ui';
 import { Colors, FontSize, Spacing } from '@/constants/theme';
-import { useQuery } from '@/hooks/use-query';
+import { useRealtime } from '@/hooks/use-realtime';
 import { limaDaysAgo, limaStartOfDay, limaStartOfMonth, soles } from '@/lib/format';
-import { supabase } from '@/lib/supabase';
-import type { Sale } from '@/types/db';
+import { observarVentasDesde } from '@/services/ventas';
+import type { Venta } from '@/types/db';
 
 type Range = 'hoy' | 'semana' | 'mes' | 'todo';
 const RANGES: { value: Range; label: string }[] = [
   { value: 'hoy', label: 'Hoy' },
   { value: 'semana', label: '7 días' },
   { value: 'mes', label: 'Este mes' },
-  { value: 'todo', label: 'Todo' },
+  { value: 'todo', label: 'Últimas 300' },
 ];
 
-async function fetchSales(range: Range): Promise<Sale[]> {
-  let q = supabase.from('sales').select('*').order('created_at', { ascending: false }).limit(300);
-  if (range === 'hoy') q = q.gte('created_at', limaStartOfDay().toISOString());
-  if (range === 'semana') q = q.gte('created_at', limaDaysAgo(6).toISOString());
-  if (range === 'mes') q = q.gte('created_at', limaStartOfMonth().toISOString());
-  const { data, error } = await q;
-  if (error) throw error;
-  return (data ?? []) as Sale[];
+function desde(range: Range): Date | null {
+  if (range === 'hoy') return limaStartOfDay();
+  if (range === 'semana') return limaDaysAgo(6);
+  if (range === 'mes') return limaStartOfMonth();
+  return null;
 }
 
 export default function SalesHistoryScreen() {
   const router = useRouter();
   const [range, setRange] = useState<Range>('hoy');
   const [search, setSearch] = useState('');
-  const { data, loading, error, refreshing, refresh, refetch } = useQuery(() => fetchSales(range), [range], { realtimeTables: ['sales'] });
+  const { data, loading, error } = useRealtime<Venta[]>((onData, onError) => observarVentasDesde(desde(range), onData, onError), [range]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return (data ?? []).filter((s) => !q || s.customer_name.toLowerCase().includes(q) || s.receipt_code.toLowerCase().includes(q) || s.customer_phone?.includes(q));
+    return (data ?? []).filter(
+      (s) => !q || s.clienteNombre.toLowerCase().includes(q) || s.codigoBoleta.toLowerCase().includes(q) || s.clienteTelefono?.includes(q)
+    );
   }, [data, search]);
 
-  const valid = filtered.filter((s) => s.status !== 'cancelado');
-  const total = valid.reduce((n, s) => n + Number(s.total), 0);
+  const validas = filtered.filter((s) => s.estadoEntrega !== 'cancelado');
+  const total = validas.reduce((n, s) => n + s.total, 0);
 
   return (
     <Screen edges={['top', 'bottom']}>
@@ -55,27 +54,26 @@ export default function SalesHistoryScreen() {
         <Card style={styles.summary}>
           <View>
             <Text style={styles.summaryLabel}>Ventas</Text>
-            <Text style={styles.summaryValue}>{valid.length}</Text>
+            <Text style={styles.summaryValue}>{validas.length}</Text>
           </View>
           <View style={{ alignItems: 'flex-end' }}>
-            <Text style={styles.summaryLabel}>Total</Text>
+            <Text style={styles.summaryLabel}>Total (sin anuladas)</Text>
             <Text style={[styles.summaryValue, { color: Colors.primary }]}>{soles(total)}</Text>
           </View>
         </Card>
       </View>
 
-      {loading && !data ? (
+      {loading ? (
         <LoadingView />
-      ) : error && !data ? (
-        <ErrorView message={error} onRetry={refetch} />
+      ) : error ? (
+        <ErrorView message={error} />
       ) : (
         <FlatList
           data={filtered}
           keyExtractor={(s) => s.id}
           contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={Colors.primary} />}
           ListEmptyComponent={<EmptyState icon="receipt-outline" title="Sin ventas" description="No hay ventas en este periodo." />}
-          renderItem={({ item }) => <SaleRow sale={item} onPress={() => router.push({ pathname: '/venta/[id]', params: { id: item.id } })} />}
+          renderItem={({ item }) => <SaleRow venta={item} onPress={() => router.push({ pathname: '/venta/[id]', params: { id: item.id } })} />}
         />
       )}
     </Screen>

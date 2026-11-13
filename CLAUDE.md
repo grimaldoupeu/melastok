@@ -17,6 +17,14 @@ Lee también `AGENTS.md` (convenciones de Expo). Antes de dar una tarea por term
 - Consultas con `src/hooks/use-query.ts` (recarga al enfocar + tiempo real).
 - Textos de UI en español; montos con `soles()`; fechas con los helpers de `src/lib/format.ts` (nunca `toLocaleString`).
 - React Compiler está activo: no escribir refs durante el render ni llamar `setState` de forma síncrona dentro de `useEffect` (el lint lo bloquea). Para inicializar formularios desde datos cargados, usa un subcomponente con `key`.
+- Tiempo real con `src/hooks/use-realtime.ts` (onSnapshot a través de un servicio).
+
+## Reglas de Firestore
+
+- Cualquier cambio en `firestore.rules` se prueba con `npm run test:reglas` (emulador; necesita Java 11+ en el PATH, por ejemplo el JDK de Android Studio en `C:\Program Files\Android\Android Studio\jbr\bin`) y se despliega con `firebase deploy --only firestore`.
+- Las transacciones críticas viven en archivos `*-core.ts` sin dependencias de React Native (por ejemplo `src/services/ventas-core.ts`) para poder probarlas en el emulador con `scripts/test-reglas-*.ts`.
+- Las reglas encadenan las escrituras de una venta con `getAfter()`/`existsAfter()`. Firestore permite 20 lecturas de documentos por transacción en las reglas, por eso una venta admite como máximo `MAX_ITEMS_VENTA` (5) productos distintos; ese número está en `ventas-core.ts` y en `firestore.rules`.
+- Montos de ventas y resúmenes en Firestore: céntimos enteros (`totalCent`, etc.), para que las reglas validen sumas exactas. La UI los convierte a soles en los servicios.
 
 ---
 

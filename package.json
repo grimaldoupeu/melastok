@@ -44,6 +44,7 @@
     "@types/react": "~19.3.0",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~58.0.4",
+    "tsx": "^4.23.15",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -55,7 +56,8 @@
     "typecheck": "tsc --noEmit",
     "build:apk": "eas build -p android --profile preview",
     "dev": "expo start --dev-client",
-    "build:dev": "eas build -p android --profile development"
+    "build:dev": "eas build -p android --profile development",
+    "test:reglas": "firebase emulators:exec --project demo-melastock --only firestore \"npx tsx scripts/test-reglas-ventas.ts\""
   },
   "private": true,
   "description": "MelaStock - ventas e inventario para talleres de muebles de melamina (GAMA Studio)"

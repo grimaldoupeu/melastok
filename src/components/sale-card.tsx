@@ -4,91 +4,95 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Badge } from '@/components/ui';
 import { Colors, FontSize, PaymentColors, Radius, Shadow, Spacing, StatusColors } from '@/constants/theme';
 import { formatDateTime, formatISODate, isPastISODate, isTodayISODate, soles } from '@/lib/format';
-import { SALE_STATUS_LABEL, type Sale } from '@/types/db';
+import { SALE_STATUS_LABEL, type EstadoEntrega, type MetodoPago, type Venta } from '@/types/db';
 
-export function StatusBadge({ status }: { status: Sale['status'] }) {
+export function StatusBadge({ status }: { status: EstadoEntrega }) {
   const c = StatusColors[status];
   return <Badge label={SALE_STATUS_LABEL[status]} bg={c.bg} fg={c.fg} />;
 }
 
-export function PaymentBadge({ method }: { method: Sale['payment_method'] }) {
+export function PaymentBadge({ method }: { method: MetodoPago }) {
   const color = PaymentColors[method] ?? Colors.primary;
   return <Badge label={method} bg={color + '22'} fg={color} />;
 }
 
 /** Fila compacta de venta (historial / últimas ventas) */
-export function SaleRow({ sale, onPress }: { sale: Sale; onPress?: () => void }) {
+export function SaleRow({ venta, onPress }: { venta: Venta; onPress?: () => void }) {
+  const anulada = venta.estadoEntrega === 'cancelado';
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.row, pressed && { opacity: 0.85 }]}>
-      <View style={styles.icon}>
-        <Ionicons name="receipt-outline" size={18} color={Colors.primary} />
+      <View style={[styles.icon, anulada && { backgroundColor: Colors.dangerSoft }]}>
+        <Ionicons name={anulada ? 'close-circle-outline' : 'receipt-outline'} size={18} color={anulada ? Colors.danger : Colors.primary} />
       </View>
       <View style={{ flex: 1, gap: 2 }}>
         <Text style={styles.customer} numberOfLines={1}>
-          {sale.customer_name}
+          {venta.clienteNombre}
         </Text>
         <Text style={styles.meta} numberOfLines={1}>
-          {sale.receipt_code} · {formatDateTime(sale.created_at)}
+          {venta.codigoBoleta} · {formatDateTime(venta.fecha)}
+          {anulada ? ' · Anulada' : ''}
         </Text>
       </View>
       <View style={{ alignItems: 'flex-end', gap: 4 }}>
-        <Text style={[styles.total, sale.status === 'cancelado' && styles.cancelled]}>{soles(sale.total)}</Text>
-        <PaymentBadge method={sale.payment_method} />
+        <Text style={[styles.total, anulada && styles.cancelled]}>{soles(venta.total)}</Text>
+        <PaymentBadge method={venta.metodoPago} />
       </View>
     </Pressable>
   );
 }
 
-/** Tarjeta de pedido (pestaña Pedidos) */
+/** Tarjeta de entrega programada (pestaña Pedidos > Entregas) */
 export function OrderCard({
-  sale,
+  venta,
   onPress,
   onAdvance,
   advanceLabel,
+  busy,
 }: {
-  sale: Sale;
+  venta: Venta;
   onPress?: () => void;
   onAdvance?: () => void;
   advanceLabel?: string;
+  busy?: boolean;
 }) {
-  const late = sale.delivery_date && isPastISODate(sale.delivery_date) && sale.status !== 'entregado' && sale.status !== 'cancelado';
-  const today = isTodayISODate(sale.delivery_date);
-  const items = sale.sale_items ?? [];
+  const activo = venta.estadoEntrega !== 'entregado' && venta.estadoEntrega !== 'cancelado';
+  const late = activo && isPastISODate(venta.fechaEntrega);
+  const today = activo && isTodayISODate(venta.fechaEntrega);
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.card, pressed && { opacity: 0.9 }]}>
       <View style={styles.cardHead}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.customer}>{sale.customer_name}</Text>
-          <Text style={styles.meta}>{sale.receipt_code}</Text>
+          <Text style={styles.customer}>{venta.clienteNombre}</Text>
+          <Text style={styles.meta}>{venta.codigoBoleta}</Text>
         </View>
-        <StatusBadge status={sale.status} />
+        <StatusBadge status={venta.estadoEntrega} />
       </View>
-      {items.length ? (
+      {venta.items.length ? (
         <Text style={styles.items} numberOfLines={2}>
-          {items.map((i) => `${i.quantity}× ${i.product_name}`).join(', ')}
+          {venta.items.map((i) => `${i.cantidad}× ${i.nombre}`).join(', ')}
         </Text>
       ) : null}
       <View style={styles.cardFoot}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Ionicons name="calendar-outline" size={16} color={late ? Colors.danger : today ? Colors.warning : Colors.textSecondary} />
           <Text style={[styles.delivery, late && { color: Colors.danger, fontWeight: '800' }, today && { color: Colors.warning, fontWeight: '800' }]}>
-            {sale.delivery_date ? formatISODate(sale.delivery_date) : 'Sin fecha'}
+            {venta.fechaEntrega ? formatISODate(venta.fechaEntrega) : 'Sin fecha'}
             {late ? ' · Atrasado' : today ? ' · Hoy' : ''}
           </Text>
         </View>
-        <Text style={styles.total}>{soles(sale.total)}</Text>
+        <Text style={styles.total}>{soles(venta.total)}</Text>
       </View>
-      {sale.delivery_address ? (
+      {venta.deliveryDireccion ? (
         <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
           <Ionicons name="location-outline" size={14} color={Colors.textMuted} />
           <Text style={styles.meta} numberOfLines={1}>
-            {sale.delivery_address}
+            {venta.deliveryDireccion}
           </Text>
         </View>
       ) : null}
       {onAdvance && advanceLabel ? (
-        <Pressable onPress={onAdvance} style={({ pressed }) => [styles.advance, pressed && { opacity: 0.8 }]}>
-          <Text style={styles.advanceText}>{advanceLabel}</Text>
+        <Pressable onPress={onAdvance} disabled={busy} style={({ pressed }) => [styles.advance, (pressed || busy) && { opacity: 0.7 }]}>
+          <Text style={styles.advanceText}>{busy ? 'Actualizando…' : advanceLabel}</Text>
           <Ionicons name="arrow-forward" size={16} color={Colors.white} />
         </Pressable>
       ) : null}

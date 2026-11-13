@@ -68,6 +68,60 @@ export const CATEGORIAS_SUGERIDAS: { nombre: string; icono: string }[] = [
   { nombre: 'Otros', icono: 'cube-outline' },
 ];
 
+/** Documento de la colección "clientes" */
+export type Cliente = {
+  id: string;
+  nombre: string;
+  telefono: string | null;
+  direccion: string | null;
+  ultimaCompraEn: Date | null;
+};
+
+export type EstadoEntrega = 'pendiente' | 'en_produccion' | 'listo' | 'entregado' | 'cancelado';
+export type MetodoPago = 'Yape' | 'Plin' | 'Efectivo' | 'Tarjeta';
+
+/** Ítem embebido en la venta (montos en soles para la UI) */
+export type VentaItem = {
+  productoId: string;
+  nombre: string;
+  cantidad: number;
+  precio: number;
+  costo: number;
+  total: number;
+};
+
+/**
+ * Documento de la colección "ventas" ya convertido para la UI.
+ * En Firestore los montos se guardan en céntimos enteros (sufijo Cent)
+ * para que las reglas puedan validar sumas exactas.
+ */
+export type Venta = {
+  id: string;
+  numeroBoleta: number;
+  codigoBoleta: string;
+  clienteId: string | null;
+  clienteNombre: string;
+  clienteTelefono: string | null;
+  vendedorId: string;
+  vendedorNombre: string;
+  items: VentaItem[];
+  metodoPago: MetodoPago;
+  subtotal: number;
+  descuento: number;
+  deliveryCosto: number;
+  deliveryDireccion: string | null;
+  total: number;
+  costoTotal: number;
+  unidades: number;
+  fechaEntrega: string | null; // YYYY-MM-DD
+  estadoEntrega: EstadoEntrega;
+  notas: string | null;
+  fecha: Date | null;
+  dia: string; // YYYY-MM-DD (Lima)
+  canceladaEn: Date | null;
+  canceladaPorNombre: string | null;
+};
+
 /* ------------------------------------------------------------------ */
 /* Supabase (en migración; se eliminará en la fase 7)                  */
 /* ------------------------------------------------------------------ */

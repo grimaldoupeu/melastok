@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 
+import { MAX_ITEMS_VENTA } from '@/services/ventas-core';
 import type { Producto } from '@/types/db';
+
+export type AddResult = 'ok' | 'sin_stock' | 'max_items';
 
 export type CartItem = {
   producto: Producto;
@@ -9,7 +12,7 @@ export type CartItem = {
 
 type CartState = {
   items: CartItem[];
-  add: (producto: Producto, cantidad?: number) => 'ok' | 'sin_stock';
+  add: (producto: Producto, cantidad?: number) => AddResult;
   remove: (productoId: string) => void;
   setQuantity: (productoId: string, cantidad: number) => void;
   increment: (productoId: string) => 'ok' | 'sin_stock';
@@ -27,6 +30,7 @@ export const useCart = create<CartState>((set, get) => ({
     const existing = items.find((i) => i.producto.id === producto.id);
     const current = existing?.cantidad ?? 0;
     if (current + cantidad > producto.stock) return 'sin_stock';
+    if (!existing && items.length >= MAX_ITEMS_VENTA) return 'max_items';
     if (existing) {
       set({
         items: items.map((i) => (i.producto.id === producto.id ? { ...i, cantidad: i.cantidad + cantidad, producto } : i)),

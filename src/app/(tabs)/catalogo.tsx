@@ -8,6 +8,7 @@ import { Chip, EmptyState, ErrorView, Fab, Header, IconButton, LoadingView, Row,
 import { Colors, Spacing } from '@/constants/theme';
 import { useAuth } from '@/hooks/use-auth';
 import { useRealtime } from '@/hooks/use-realtime';
+import { mensajeAgregar } from '@/lib/cart-messages';
 import { soles } from '@/lib/format';
 import { observarCategorias } from '@/services/categorias';
 import { observarProductosActivos } from '@/services/productos';
@@ -47,8 +48,8 @@ export default function CatalogScreen() {
   const inCartOf = (id: string) => items.find((i) => i.producto.id === id)?.cantidad ?? 0;
 
   const handleAdd = (p: Producto) => {
-    const r = add(p);
-    if (r === 'sin_stock') toast.show(`No hay más stock de ${p.nombre}`, 'error');
+    const msg = mensajeAgregar(add(p), p.nombre);
+    if (msg) toast.show(msg, 'error');
   };
 
   const nuevoProducto = () => router.push({ pathname: '/producto/[id]', params: { id: 'nuevo' } });

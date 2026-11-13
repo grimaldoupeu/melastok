@@ -49,3 +49,4 @@ example
 .firebase/
 serviceAccount.json
 firebase-debug.log
+firestore-debug.log

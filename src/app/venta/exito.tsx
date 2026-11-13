@@ -6,41 +6,34 @@ import { PaymentBadge } from '@/components/sale-card';
 import { useToast } from '@/components/toast';
 import { Button, Card, Divider, ErrorView, KeyValue, LoadingView, Screen } from '@/components/ui';
 import { Colors, FontSize, Spacing } from '@/constants/theme';
-import { useQuery } from '@/hooks/use-query';
+import { useRealtime } from '@/hooks/use-realtime';
+import { firebaseErrorMessage } from '@/lib/firebase';
 import { formatDateTime, formatISODate, soles } from '@/lib/format';
 import { sendReceiptByWhatsApp } from '@/lib/receipt';
-import { errorMessage, supabase } from '@/lib/supabase';
-import type { Sale } from '@/types/db';
+import { observarVenta } from '@/services/ventas';
+import type { Venta } from '@/types/db';
 
 export default function SaleSuccessScreen() {
   const router = useRouter();
   const toast = useToast();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { data: sale, loading, error, refetch } = useQuery(
-    async () => {
-      const { data, error: err } = await supabase.from('sales').select('*, sale_items(*)').eq('id', id).single();
-      if (err) throw err;
-      return data as Sale;
-    },
-    [id],
-    { refetchOnFocus: false }
-  );
+  const { data: venta, loading, error } = useRealtime<Venta | null>((onData, onError) => observarVenta(id, onData, onError), [id]);
 
   const share = async () => {
-    if (!sale) return;
+    if (!venta) return;
     try {
-      await sendReceiptByWhatsApp(sale, sale.sale_items ?? []);
+      await sendReceiptByWhatsApp(venta);
     } catch (e) {
-      toast.show(errorMessage(e, 'No se pudo abrir WhatsApp'), 'error');
+      toast.show(firebaseErrorMessage(e, 'No se pudo abrir WhatsApp'), 'error');
     }
   };
 
   return (
     <Screen edges={['top', 'bottom']}>
-      {loading && !sale ? (
-        <LoadingView text="Guardando venta…" />
-      ) : error || !sale ? (
-        <ErrorView message={error ?? 'Venta no encontrada'} onRetry={refetch} />
+      {loading ? (
+        <LoadingView text="Cargando boleta…" />
+      ) : error || !venta ? (
+        <ErrorView message={error ?? 'Venta no encontrada'} />
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           <View style={styles.hero}>
@@ -48,34 +41,34 @@ export default function SaleSuccessScreen() {
               <Ionicons name="checkmark" size={44} color={Colors.white} />
             </View>
             <Text style={styles.title}>¡Venta registrada!</Text>
-            <Text style={styles.subtitle}>Boleta {sale.receipt_code}</Text>
-            <Text style={styles.total}>{soles(sale.total)}</Text>
-            <PaymentBadge method={sale.payment_method} />
+            <Text style={styles.subtitle}>Boleta {venta.codigoBoleta}</Text>
+            <Text style={styles.total}>{soles(venta.total)}</Text>
+            <PaymentBadge method={venta.metodoPago} />
           </View>
 
           <Card style={{ gap: 4 }}>
-            <KeyValue label="Cliente" value={sale.customer_name} />
-            {sale.customer_phone ? <KeyValue label="Teléfono" value={sale.customer_phone} /> : null}
-            <KeyValue label="Fecha" value={formatDateTime(sale.created_at)} />
-            {sale.seller_name ? <KeyValue label="Vendedor" value={sale.seller_name} /> : null}
-            {sale.delivery_date ? <KeyValue label="Entrega" value={formatISODate(sale.delivery_date, true)} /> : null}
-            {sale.delivery_address ? <KeyValue label="Dirección" value={sale.delivery_address} /> : null}
+            <KeyValue label="Cliente" value={venta.clienteNombre} />
+            {venta.clienteTelefono ? <KeyValue label="Teléfono" value={venta.clienteTelefono} /> : null}
+            <KeyValue label="Fecha" value={formatDateTime(venta.fecha)} />
+            <KeyValue label="Vendedor" value={venta.vendedorNombre} />
+            {venta.fechaEntrega ? <KeyValue label="Entrega" value={formatISODate(venta.fechaEntrega, true)} /> : null}
+            {venta.deliveryDireccion ? <KeyValue label="Dirección" value={venta.deliveryDireccion} /> : null}
             <Divider />
-            {(sale.sale_items ?? []).map((it) => (
-              <View key={it.id} style={styles.item}>
-                <Text style={styles.itemQty}>{it.quantity}×</Text>
+            {venta.items.map((it) => (
+              <View key={it.productoId} style={styles.item}>
+                <Text style={styles.itemQty}>{it.cantidad}×</Text>
                 <Text style={styles.itemName} numberOfLines={2}>
-                  {it.product_name}
+                  {it.nombre}
                 </Text>
                 <Text style={styles.itemTotal}>{soles(it.total)}</Text>
               </View>
             ))}
             <Divider />
-            <KeyValue label="Subtotal" value={soles(sale.subtotal)} />
-            {Number(sale.discount) > 0 ? <KeyValue label="Descuento" value={`- ${soles(sale.discount)}`} color={Colors.danger} /> : null}
-            {Number(sale.delivery_cost) > 0 ? <KeyValue label="Delivery" value={soles(sale.delivery_cost)} /> : null}
-            <KeyValue label="Total" value={soles(sale.total)} bold color={Colors.primary} />
-            {sale.notes ? <Text style={styles.notes}>Nota: {sale.notes}</Text> : null}
+            <KeyValue label="Subtotal" value={soles(venta.subtotal)} />
+            {venta.descuento > 0 ? <KeyValue label="Descuento" value={`- ${soles(venta.descuento)}`} color={Colors.danger} /> : null}
+            {venta.deliveryCosto > 0 ? <KeyValue label="Delivery" value={soles(venta.deliveryCosto)} /> : null}
+            <KeyValue label="Total" value={soles(venta.total)} bold color={Colors.primary} />
+            {venta.notas ? <Text style={styles.notes}>Nota: {venta.notas}</Text> : null}
           </Card>
 
           <View style={{ gap: Spacing.sm, marginTop: Spacing.sm }}>

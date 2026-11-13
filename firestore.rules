@@ -2,37 +2,46 @@ rules_version = '2';
 
 // =====================================================================
 //  MelaStock · Reglas de Firestore
-//  Fase 1: perfiles y roles. Las demás colecciones se agregan por fase.
 //  Desplegar: firebase deploy --only firestore
+//  Probar:    npm run test:reglas   (emulador, ver scripts/test-reglas-ventas.ts)
+//
+//  Límite de Firestore: máximo 10 lecturas de documentos (get/exists/
+//  getAfter/existsAfter) por operación y 20 por transacción completa.
+//  Por eso cada regla lee lo mínimo y una venta admite MAX_ITEMS_VENTA
+//  productos distintos (mismo valor en src/services/ventas-core.ts).
 // =====================================================================
 service cloud.firestore {
   match /databases/{database}/documents {
 
     // ------------------------------------------------------------------
-    // Helpers
+    // Helpers de sesión y rol (1 lectura: perfiles/{uid})
     // ------------------------------------------------------------------
     function autenticado() {
       return request.auth != null;
     }
 
-    function perfilActual() {
-      return get(/databases/$(database)/documents/perfiles/$(request.auth.uid)).data;
+    function ruta(coleccion, id) {
+      return /databases/$(database)/documents/$(coleccion)/$(id);
     }
 
-    function tienePerfil() {
-      return exists(/databases/$(database)/documents/perfiles/$(request.auth.uid));
+    function perfilActual() {
+      return get(ruta('perfiles', request.auth.uid)).data;
+    }
+
+    function perfilEsAdmin(p) {
+      return p.rol == 'admin' && p.activo == true;
+    }
+
+    // Usuario con perfil aprobado por el admin. TODA colección de datos parte
+    // de esta función (o de esAdmin, que también exige activo == true): un
+    // perfil pendiente o desactivado solo puede leer su propio perfil.
+    // Si el perfil no existe, get() falla y la regla deniega.
+    function esUsuarioActivo() {
+      return autenticado() && perfilActual().activo == true;
     }
 
     function esAdmin() {
-      return autenticado() && tienePerfil() && perfilActual().rol == 'admin' && perfilActual().activo == true;
-    }
-
-    // Usuario con perfil aprobado por el admin. TODAS las colecciones de datos
-    // (productos, ventas, materiales, pedidos, etc.) deben exigir esta función:
-    // un perfil pendiente o desactivado no puede leer ni escribir nada fuera
-    // de su propio documento en "perfiles".
-    function esUsuarioActivo() {
-      return autenticado() && tienePerfil() && perfilActual().activo == true;
+      return autenticado() && perfilEsAdmin(perfilActual());
     }
 
     function rolValido(rol) {
@@ -40,49 +49,7 @@ service cloud.firestore {
     }
 
     // ------------------------------------------------------------------
-    // perfiles/{uid}
-    // ------------------------------------------------------------------
-    match /perfiles/{uid} {
-      // Cada usuario puede leer su propio perfil (para saber si está aprobado).
-      // Los demás perfiles solo los leen usuarios activos (nombres de vendedores en ventas, etc.).
-      allow read: if autenticado() && (request.auth.uid == uid || esUsuarioActivo());
-
-      // Un usuario puede crear SOLO su propio perfil, SOLO como vendedor y SOLO
-      // INACTIVO (pendiente de aprobación). Así, aunque alguien se registre en Auth
-      // con el firebaseConfig, no obtiene acceso a nada hasta que el admin lo apruebe.
-      // Solo el admin puede crear perfiles con activo == true (Gestionar usuarios).
-      allow create: if autenticado()
-        && request.resource.data.keys().hasAll(['nombre', 'email', 'rol', 'activo'])
-        && request.resource.data.nombre is string
-        && request.resource.data.email is string
-        && rolValido(request.resource.data.rol)
-        && request.resource.data.activo is bool
-        && (
-          (request.auth.uid == uid && request.resource.data.rol == 'vendedor' && request.resource.data.activo == false)
-          || esAdmin()
-        );
-
-      // El usuario puede cambiar solo su nombre; el admin puede cambiar nombre, rol y activo
-      // (pero no su propio rol ni desactivarse a sí mismo).
-      allow update: if autenticado() && (
-          (
-            request.auth.uid == uid
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nombre', 'actualizadoEn'])
-          )
-          || (
-            esAdmin()
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nombre', 'rol', 'activo', 'actualizadoEn'])
-            && rolValido(request.resource.data.rol)
-            && request.resource.data.activo is bool
-            && (request.auth.uid != uid || (request.resource.data.rol == 'admin' && request.resource.data.activo == true))
-          )
-        );
-
-      allow delete: if esAdmin() && request.auth.uid != uid;
-    }
-
-    // ------------------------------------------------------------------
-    // Helpers de validación de campos
+    // Helpers de validación
     // ------------------------------------------------------------------
     function esTextoOpcional(v) {
       return v == null || v is string;
@@ -96,9 +63,68 @@ service cloud.firestore {
       return v is int && v >= 0;
     }
 
-    // ------------------------------------------------------------------
-    // categorias/{id}  — lectura: usuarios activos; escritura: admin
-    // ------------------------------------------------------------------
+    function exactamente(d, campos) {
+      return d.keys().hasOnly(campos) && d.keys().hasAll(campos);
+    }
+
+    function cambiaSolo(campos) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(campos);
+    }
+
+    // Fecha YYYY-MM-DD en hora de Lima (UTC-5, sin horario de verano)
+    function fechaLima(t) {
+      let l = t - duration.value(5, 'h');
+      return string(l.year()) + '-' + (l.month() < 10 ? '0' : '') + string(l.month())
+        + '-' + (l.day() < 10 ? '0' : '') + string(l.day());
+    }
+
+    // Tolera 15 minutos de diferencia con el reloj del celular cerca de medianoche
+    function esDiaDeHoy(dia) {
+      return dia == fechaLima(request.time)
+        || dia == fechaLima(request.time - duration.value(15, 'm'))
+        || dia == fechaLima(request.time + duration.value(15, 'm'));
+    }
+
+    // ==================================================================
+    // perfiles/{uid}
+    // ==================================================================
+    match /perfiles/{uid} {
+      // Cada usuario lee su propio perfil (para saber si fue aprobado);
+      // los demás perfiles solo los leen usuarios activos.
+      allow read: if autenticado() && (request.auth.uid == uid || esUsuarioActivo());
+
+      // Un usuario solo puede crear SU perfil, como vendedor e INACTIVO
+      // (pendiente de aprobación). Solo el admin crea perfiles activos.
+      allow create: if autenticado()
+        && request.resource.data.keys().hasAll(['nombre', 'email', 'rol', 'activo'])
+        && request.resource.data.nombre is string
+        && request.resource.data.email is string
+        && rolValido(request.resource.data.rol)
+        && request.resource.data.activo is bool
+        && (
+          (request.auth.uid == uid && request.resource.data.rol == 'vendedor' && request.resource.data.activo == false)
+          || esAdmin()
+        );
+
+      // El usuario solo cambia su nombre. El admin cambia nombre, rol y activo,
+      // pero no puede quitarse el rol ni desactivarse a sí mismo.
+      allow update: if autenticado() && (
+          (request.auth.uid == uid && cambiaSolo(['nombre', 'actualizadoEn']))
+          || (
+            esAdmin()
+            && cambiaSolo(['nombre', 'rol', 'activo', 'actualizadoEn'])
+            && rolValido(request.resource.data.rol)
+            && request.resource.data.activo is bool
+            && (request.auth.uid != uid || (request.resource.data.rol == 'admin' && request.resource.data.activo == true))
+          )
+        );
+
+      allow delete: if esAdmin() && request.auth.uid != uid;
+    }
+
+    // ==================================================================
+    // categorias/{id} — leen usuarios activos; escribe el admin
+    // ==================================================================
     function categoriaValida(d) {
       return d.keys().hasOnly(['nombre', 'icono', 'orden'])
         && d.nombre is string && d.nombre.size() >= 2 && d.nombre.size() <= 60
@@ -108,21 +134,23 @@ service cloud.firestore {
 
     match /categorias/{id} {
       allow read: if esUsuarioActivo();
-      allow create: if esAdmin() && categoriaValida(request.resource.data);
-      allow update: if esAdmin() && categoriaValida(request.resource.data);
+      allow create, update: if esAdmin() && categoriaValida(request.resource.data);
       allow delete: if esAdmin();
     }
 
-    // ------------------------------------------------------------------
+    // ==================================================================
     // productos/{id}
-    //   lectura: usuarios activos
-    //   crear / borrar / editar datos: admin
-    //   el stock SOLO cambia: (a) por el admin, (b) por una venta de un
-    //   usuario activo, que únicamente puede DISMINUIRLO (fase 3).
-    // ------------------------------------------------------------------
+    //   El vendedor NUNCA edita productos directamente. Solo puede bajar el
+    //   stock dentro de la transacción de una venta nueva:
+    //     - el producto guarda ultimaVentaId = id de la venta,
+    //     - esa venta NO existía antes de la transacción y
+    //     - existe el movimiento movimientos/{ventaId}_{productoId} con la
+    //       misma cantidad, stockAnterior y stockNuevo.
+    //   El movimiento, a su vez, exige que la venta lo contenga (ver abajo).
+    // ==================================================================
     function productoValido(d) {
       return d.keys().hasOnly(['nombre', 'descripcion', 'categoriaId', 'categoriaNombre', 'precio', 'costo',
-                               'stock', 'stockMinimo', 'fotoUrl', 'activo', 'creadoEn', 'actualizadoEn'])
+                               'stock', 'stockMinimo', 'fotoUrl', 'activo', 'creadoEn', 'actualizadoEn', 'ultimaVentaId'])
         && d.nombre is string && d.nombre.size() >= 2 && d.nombre.size() <= 120
         && esTextoOpcional(d.descripcion)
         && esTextoOpcional(d.categoriaId)
@@ -135,26 +163,283 @@ service cloud.firestore {
         && d.activo is bool;
     }
 
+    // 2 lecturas: ventas/{v} (antes) y movimientos/{v}_{id} (después)
+    function bajaDeStockPorVenta(productoId) {
+      let nuevo = request.resource.data;
+      let ventaId = nuevo.ultimaVentaId;
+      let mov = getAfter(ruta('movimientos', ventaId + '_' + productoId)).data;
+      return ventaId is string
+        && ventaId != resource.data.get('ultimaVentaId', '')
+        && !exists(ruta('ventas', ventaId))
+        && mov.tipo == 'salida'
+        && mov.ventaId == ventaId
+        && mov.itemId == productoId
+        && mov.usuarioId == request.auth.uid
+        && mov.stockAnterior == resource.data.stock
+        && mov.stockNuevo == nuevo.stock
+        && mov.cantidad == resource.data.stock - nuevo.stock;
+    }
+
     match /productos/{id} {
       allow read: if esUsuarioActivo();
       allow create: if esAdmin() && productoValido(request.resource.data);
       allow delete: if esAdmin();
       allow update: if productoValido(request.resource.data) && (
-          esAdmin()
-          || (
-            // Venta: solo baja el stock, nunca por debajo de 0, sin tocar otros campos
-            esUsuarioActivo()
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'actualizadoEn'])
+          (
+            cambiaSolo(['stock', 'ultimaVentaId', 'actualizadoEn'])
             && request.resource.data.stock < resource.data.stock
-            && request.resource.data.stock >= 0
+            && bajaDeStockPorVenta(id)
+          )
+          || esAdmin()
+        );
+    }
+
+    // ==================================================================
+    // clientes/{id} — usuarios activos leen, crean y actualizan
+    // ==================================================================
+    function clienteValido(d) {
+      return d.keys().hasOnly(['nombre', 'telefono', 'direccion', 'creadoEn', 'ultimaCompraEn', 'actualizadoEn'])
+        && d.nombre is string && d.nombre.size() >= 1 && d.nombre.size() <= 100
+        && esTextoOpcional(d.telefono)
+        && esTextoOpcional(d.direccion);
+    }
+
+    match /clientes/{id} {
+      allow read: if esUsuarioActivo();
+      allow create, update: if esUsuarioActivo() && clienteValido(request.resource.data);
+      allow delete: if esAdmin();
+    }
+
+    // ==================================================================
+    // ventas/{ventaId}
+    //   Crear: usuario activo, a su nombre, con fecha del servidor, montos en
+    //   céntimos cuadrados, y en la MISMA transacción el contador de boletas
+    //   y el resumen del día deben apuntar a esta venta.
+    //   Actualizar: el vendedor avanza el estado de entrega; solo el admin cancela.
+    //   Nunca se borran.
+    // ==================================================================
+    function ventaCampos() {
+      return ['numeroBoleta', 'codigoBoleta', 'clienteId', 'clienteNombre', 'clienteTelefono', 'vendedorId',
+              'vendedorNombre', 'items', 'metodoPago', 'subtotalCent', 'descuentoCent', 'deliveryCent', 'totalCent',
+              'costoTotalCent', 'unidades', 'deliveryDireccion', 'fechaEntrega', 'estadoEntrega', 'notas', 'fecha',
+              'dia', 'actualizadoEn', 'canceladaEn', 'canceladaPor', 'canceladaPorNombre'];
+    }
+
+    function ventaMontosValidos(v) {
+      return esEnteroNoNegativo(v.subtotalCent)
+        && esEnteroNoNegativo(v.descuentoCent)
+        && esEnteroNoNegativo(v.deliveryCent)
+        && esEnteroNoNegativo(v.totalCent)
+        && esEnteroNoNegativo(v.costoTotalCent)
+        && v.unidades is int && v.unidades > 0
+        && v.descuentoCent <= v.subtotalCent
+        && v.totalCent == v.subtotalCent - v.descuentoCent + v.deliveryCent;
+    }
+
+    // MAX_ITEMS_VENTA = 5 (debe coincidir con src/services/ventas-core.ts)
+    function ventaNuevaValida(ventaId) {
+      let v = request.resource.data;
+      let contador = getAfter(ruta('contadores', 'boletas')).data;
+      let resumen = getAfter(ruta('resumen_diario', v.dia)).data;
+      return exactamente(v, ventaCampos())
+        && v.vendedorId == request.auth.uid
+        && v.vendedorNombre is string
+        && v.clienteNombre is string && v.clienteNombre.size() >= 1 && v.clienteNombre.size() <= 100
+        && esTextoOpcional(v.clienteId)
+        && esTextoOpcional(v.clienteTelefono)
+        && v.items is list && v.items.size() >= 1 && v.items.size() <= 5
+        && v.metodoPago in ['Yape', 'Plin', 'Efectivo', 'Tarjeta']
+        && ventaMontosValidos(v)
+        && esTextoOpcional(v.deliveryDireccion)
+        && esTextoOpcional(v.notas)
+        && ((v.fechaEntrega == null && v.estadoEntrega == 'entregado')
+            || (v.fechaEntrega is string && v.estadoEntrega == 'pendiente'))
+        && v.fecha == request.time
+        && esDiaDeHoy(v.dia)
+        && v.canceladaEn == null && v.canceladaPor == null && v.canceladaPorNombre == null
+        && v.numeroBoleta is int
+        && v.numeroBoleta == contador.ultimo
+        && contador.ultimaVentaId == ventaId
+        && v.codigoBoleta is string
+        && v.codigoBoleta.matches(contador.serie + '-[0-9]{8}')
+        && resumen.ultimaVentaId == ventaId;
+    }
+
+    match /ventas/{ventaId} {
+      allow read: if esUsuarioActivo();
+      allow delete: if false;
+
+      allow create: if esUsuarioActivo() && ventaNuevaValida(ventaId);
+
+      allow update: if (
+          // Vendedor o admin: avanzar el estado de entrega (nunca a cancelado)
+          esUsuarioActivo()
+          && cambiaSolo(['estadoEntrega', 'actualizadoEn'])
+          && resource.data.estadoEntrega != 'cancelado'
+          && request.resource.data.estadoEntrega in ['pendiente', 'en_produccion', 'listo', 'entregado']
+        ) || (
+          // Admin: cancelar, en la misma transacción que descuenta el resumen
+          esAdmin()
+          && cambiaSolo(['estadoEntrega', 'canceladaEn', 'canceladaPor', 'canceladaPorNombre', 'actualizadoEn'])
+          && resource.data.estadoEntrega != 'cancelado'
+          && request.resource.data.estadoEntrega == 'cancelado'
+          && request.resource.data.canceladaPor == request.auth.uid
+          && request.resource.data.canceladaEn == request.time
+          && getAfter(ruta('resumen_diario', resource.data.dia)).data.ultimaVentaId == ventaId
+        );
+    }
+
+    // ==================================================================
+    // movimientos/{movId} — kardex. Inmutable: no se edita ni se borra.
+    //   Salida por venta: id = {ventaId}_{productoId}; la venta es nueva en
+    //   esta transacción, contiene el producto en items[indiceItem] con la
+    //   misma cantidad, y el stock del producto queda en stockNuevo.
+    //   Entrada por anulación: solo admin, id = {ventaId}_{productoId}_anul.
+    // ==================================================================
+    function movimientoCampos() {
+      return ['tipo', 'itemTipo', 'itemId', 'itemNombre', 'cantidad', 'costoUnitario', 'stockAnterior', 'stockNuevo',
+              'ventaId', 'indiceItem', 'proveedorId', 'proveedorNombre', 'nota', 'usuarioId', 'usuarioNombre', 'fecha'];
+    }
+
+    function movimientoBaseValido(m) {
+      return exactamente(m, movimientoCampos())
+        && m.itemTipo == 'producto'
+        && m.itemId is string && m.itemNombre is string
+        && m.cantidad is int && m.cantidad > 0
+        && esEnteroNoNegativo(m.stockAnterior)
+        && esEnteroNoNegativo(m.stockNuevo)
+        && esNumeroOpcional(m.costoUnitario)
+        && m.usuarioId == request.auth.uid
+        && m.fecha == request.time;
+    }
+
+    // 3 lecturas: ventas/{v} (antes y después) y productos/{id} (después)
+    function salidaPorVentaValida(movId) {
+      let m = request.resource.data;
+      let venta = getAfter(ruta('ventas', m.ventaId)).data;
+      let item = venta.items[m.indiceItem];
+      return movimientoBaseValido(m)
+        && m.tipo == 'salida'
+        && m.ventaId is string
+        && movId == m.ventaId + '_' + m.itemId
+        && m.indiceItem is int && m.indiceItem >= 0
+        && !exists(ruta('ventas', m.ventaId))
+        && venta.vendedorId == request.auth.uid
+        && item.productoId == m.itemId
+        && item.cantidad == m.cantidad
+        && m.stockNuevo == m.stockAnterior - m.cantidad
+        && getAfter(ruta('productos', m.itemId)).data.stock == m.stockNuevo;
+    }
+
+    function entradaPorAnulacionValida(movId) {
+      let m = request.resource.data;
+      return movimientoBaseValido(m)
+        && m.tipo == 'entrada'
+        && m.ventaId is string
+        && movId == m.ventaId + '_' + m.itemId + '_anul'
+        && m.stockNuevo == m.stockAnterior + m.cantidad
+        && getAfter(ruta('ventas', m.ventaId)).data.estadoEntrega == 'cancelado';
+    }
+
+    match /movimientos/{movId} {
+      allow read: if esUsuarioActivo();
+      allow update, delete: if false;
+      allow create: if (request.resource.data.tipo == 'salida' && salidaPorVentaValida(movId))
+        || (request.resource.data.tipo == 'entrada' && esAdmin() && entradaPorAnulacionValida(movId));
+    }
+
+    // ==================================================================
+    // contadores/boletas — correlativo de boletas
+    //   Solo sube de 1 en 1 y solo junto con la venta que recibe ese número.
+    //   El admin puede cambiar la serie (B001, B002...).
+    // ==================================================================
+    match /contadores/{id} {
+      allow read: if esUsuarioActivo();
+      allow delete: if false;
+
+      // 1 lectura: ventas/{ultimaVentaId} (después). Una venta antigua nunca
+      // tiene el número siguiente, así que no hace falta verificar que sea nueva.
+      allow create, update: if id == 'boletas' && (
+          (
+            exactamente(request.resource.data, ['serie', 'ultimo', 'ultimaVentaId'])
+            && request.resource.data.serie is string
+            && request.resource.data.ultimo == (resource == null ? 0 : resource.data.ultimo) + 1
+            && (resource == null || request.resource.data.serie == resource.data.serie)
+            && getAfter(ruta('ventas', request.resource.data.ultimaVentaId)).data.numeroBoleta == request.resource.data.ultimo
+          )
+          || (
+            resource != null && esAdmin()
+            && cambiaSolo(['serie'])
+            && request.resource.data.serie is string && request.resource.data.serie.size() <= 8
           )
         );
     }
 
+    // ==================================================================
+    // resumen_diario/{dia} — totales por día (céntimos), para Inicio y Reportes
+    //   Venta: suma exactamente los montos de una venta NUEVA de ese día.
+    //   Anulación (admin): resta exactamente los montos de la venta cancelada.
+    // ==================================================================
+    function resumenCampos() {
+      return ['dia', 'numVentas', 'totalCent', 'costoCent', 'unidades', 'porMetodoCent', 'pagosPedidosCent',
+              'ultimaVentaId', 'actualizadoEn'];
+    }
+
+    function resumenPrevio(dia) {
+      return resource == null
+        ? { 'dia': dia, 'numVentas': 0, 'totalCent': 0, 'costoCent': 0, 'unidades': 0,
+            'porMetodoCent': { 'Yape': 0, 'Plin': 0, 'Efectivo': 0, 'Tarjeta': 0 }, 'pagosPedidosCent': 0 }
+        : resource.data;
+    }
+
+    // signo = 1 suma la venta, -1 la resta
+    function resumenAplicaVenta(r, p, v, signo) {
+      return exactamente(r, resumenCampos())
+        && r.numVentas == p.numVentas + signo
+        && r.totalCent == p.totalCent + signo * v.totalCent
+        && r.costoCent == p.costoCent + signo * v.costoTotalCent
+        && r.unidades == p.unidades + signo * v.unidades
+        && r.pagosPedidosCent == p.pagosPedidosCent
+        && r.porMetodoCent.diff(p.porMetodoCent).affectedKeys().hasOnly([v.metodoPago])
+        && r.porMetodoCent[v.metodoPago] == p.porMetodoCent[v.metodoPago] + signo * v.totalCent;
+    }
+
+    // 2 lecturas: ventas/{v} (antes y después)
+    function resumenSumaVenta(dia) {
+      let r = request.resource.data;
+      let v = getAfter(ruta('ventas', r.ultimaVentaId)).data;
+      return r.dia == dia
+        && v.dia == dia
+        && v.vendedorId == request.auth.uid
+        && !exists(ruta('ventas', r.ultimaVentaId))
+        && resumenAplicaVenta(r, resumenPrevio(dia), v, 1);
+    }
+
+    function resumenRestaAnulacion(dia) {
+      let r = request.resource.data;
+      let antes = get(ruta('ventas', r.ultimaVentaId)).data;
+      let despues = getAfter(ruta('ventas', r.ultimaVentaId)).data;
+      return resource != null
+        && r.dia == dia
+        && antes.dia == dia
+        && antes.estadoEntrega != 'cancelado'
+        && despues.estadoEntrega == 'cancelado'
+        && resumenAplicaVenta(r, resource.data, antes, -1);
+    }
+
+    match /resumen_diario/{dia} {
+      allow read: if esUsuarioActivo();
+      allow delete: if false;
+      allow create, update: if (
+          request.resource.data.numVentas == resumenPrevio(dia).numVentas + 1 && resumenSumaVenta(dia)
+        ) || (
+          request.resource.data.numVentas == resumenPrevio(dia).numVentas - 1 && esAdmin() && resumenRestaAnulacion(dia)
+        );
+    }
+
     // ------------------------------------------------------------------
-    // Resto de colecciones: por defecto denegado hasta su fase.
-    // Al agregarlas, toda lectura/escritura debe partir de esUsuarioActivo()
-    // (o esAdmin(), que ya implica activo == true).
+    // Resto de colecciones: denegado hasta su fase. Al agregarlas, toda
+    // lectura/escritura parte de esUsuarioActivo() o esAdmin().
     // ------------------------------------------------------------------
     match /{document=**} {
       allow read, write: if false;

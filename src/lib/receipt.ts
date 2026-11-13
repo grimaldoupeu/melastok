@@ -1,44 +1,48 @@
 import { Linking } from 'react-native';
 
 import { formatDateTime, formatISODate, soles, toWhatsAppNumber } from '@/lib/format';
-import type { Sale, SaleItem } from '@/types/db';
+import type { Venta } from '@/types/db';
 
 const BUSINESS_NAME = process.env.EXPO_PUBLIC_BUSINESS_NAME || 'Muebles de Melamina';
 const BUSINESS_PHONE = process.env.EXPO_PUBLIC_BUSINESS_PHONE || '';
 const BUSINESS_ADDRESS = process.env.EXPO_PUBLIC_BUSINESS_ADDRESS || '';
 
 /** Genera el texto de la boleta para enviar por WhatsApp */
-export function buildReceiptText(sale: Sale, items: SaleItem[]): string {
+export function buildReceiptText(venta: Venta): string {
   const lines: string[] = [];
   lines.push(`🪵 *${BUSINESS_NAME}*`);
   if (BUSINESS_ADDRESS) lines.push(BUSINESS_ADDRESS);
   if (BUSINESS_PHONE) lines.push(`Tel: ${BUSINESS_PHONE}`);
   lines.push('');
-  lines.push(`*BOLETA ${sale.receipt_code}*`);
-  lines.push(`Fecha: ${formatDateTime(sale.created_at)}`);
-  lines.push(`Cliente: ${sale.customer_name}`);
-  if (sale.customer_phone) lines.push(`Teléfono: ${sale.customer_phone}`);
-  if (sale.seller_name) lines.push(`Atendido por: ${sale.seller_name}`);
+  lines.push(`*BOLETA ${venta.codigoBoleta}*`);
+  if (venta.estadoEntrega === 'cancelado') lines.push('*** ANULADA ***');
+  lines.push(`Fecha: ${formatDateTime(venta.fecha)}`);
+  lines.push(`Cliente: ${venta.clienteNombre}`);
+  if (venta.clienteTelefono) lines.push(`Teléfono: ${venta.clienteTelefono}`);
+  if (venta.vendedorNombre) lines.push(`Atendido por: ${venta.vendedorNombre}`);
   lines.push('');
   lines.push('*DETALLE*');
-  for (const it of items) {
-    lines.push(`• ${it.quantity} x ${it.product_name}`);
-    lines.push(`   ${soles(it.unit_price)} c/u = ${soles(it.total)}`);
+  for (const it of venta.items) {
+    lines.push(`• ${it.cantidad} x ${it.nombre}`);
+    lines.push(`   ${soles(it.precio)} c/u = ${soles(it.total)}`);
   }
   lines.push('');
-  lines.push(`Subtotal: ${soles(sale.subtotal)}`);
-  if (Number(sale.discount) > 0) lines.push(`Descuento: -${soles(sale.discount)}`);
-  if (Number(sale.delivery_cost) > 0) lines.push(`Delivery: ${soles(sale.delivery_cost)}`);
-  lines.push(`*TOTAL: ${soles(sale.total)}*`);
-  lines.push(`Pago: ${sale.payment_method}`);
-  if (sale.delivery_date) {
+  lines.push(`Subtotal: ${soles(venta.subtotal)}`);
+  if (venta.descuento > 0) lines.push(`Descuento: -${soles(venta.descuento)}`);
+  if (venta.deliveryCosto > 0) lines.push(`Delivery: ${soles(venta.deliveryCosto)}`);
+  lines.push(`*TOTAL: ${soles(venta.total)}*`);
+  lines.push(`Pago: ${venta.metodoPago}`);
+  if (venta.fechaEntrega) {
     lines.push('');
-    lines.push(`📦 Entrega: ${formatISODate(sale.delivery_date, true)}`);
-    if (sale.delivery_address) lines.push(`📍 ${sale.delivery_address}`);
+    lines.push(`📦 Entrega: ${formatISODate(venta.fechaEntrega, true)}`);
+    if (venta.deliveryDireccion) lines.push(`📍 ${venta.deliveryDireccion}`);
+  } else if (venta.deliveryDireccion) {
+    lines.push('');
+    lines.push(`📍 Delivery: ${venta.deliveryDireccion}`);
   }
-  if (sale.notes) {
+  if (venta.notas) {
     lines.push('');
-    lines.push(`Nota: ${sale.notes}`);
+    lines.push(`Nota: ${venta.notas}`);
   }
   lines.push('');
   lines.push('¡Gracias por su compra! 🙌');
@@ -46,9 +50,9 @@ export function buildReceiptText(sale: Sale, items: SaleItem[]): string {
 }
 
 /** Abre WhatsApp (wa.me) con el comprobante. Si no hay teléfono, deja elegir el contacto. */
-export async function sendReceiptByWhatsApp(sale: Sale, items: SaleItem[]): Promise<void> {
-  const text = encodeURIComponent(buildReceiptText(sale, items));
-  const number = toWhatsAppNumber(sale.customer_phone);
+export async function sendReceiptByWhatsApp(venta: Venta): Promise<void> {
+  const text = encodeURIComponent(buildReceiptText(venta));
+  const number = toWhatsAppNumber(venta.clienteTelefono);
   const url = number ? `https://wa.me/${number}?text=${text}` : `https://wa.me/?text=${text}`;
   await Linking.openURL(url);
 }

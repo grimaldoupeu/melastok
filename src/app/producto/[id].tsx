@@ -10,6 +10,7 @@ import { Banner, Button, Card, ConfirmDialog, ErrorView, Header, Input, KeyValue
 import { Colors, FontSize, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/hooks/use-auth';
 import { useRealtime } from '@/hooks/use-realtime';
+import { mensajeAgregar } from '@/lib/cart-messages';
 import { firebaseErrorMessage } from '@/lib/firebase';
 import { parseNumber, soles } from '@/lib/format';
 import { pickProductImage, type PickedImage } from '@/lib/image-picker';
@@ -117,7 +118,10 @@ function ProductDetail({ producto }: { producto: Producto }) {
               icon="add"
               size="sm"
               disabled={producto.stock <= 0}
-              onPress={() => (add(producto) === 'sin_stock' ? toast.show('Sin stock disponible', 'error') : toast.show('Agregado al carrito', 'success'))}
+              onPress={() => {
+                const msg = mensajeAgregar(add(producto), producto.nombre);
+                toast.show(msg ?? 'Agregado al carrito', msg ? 'error' : 'success');
+              }}
             />
           )}
         </Card>

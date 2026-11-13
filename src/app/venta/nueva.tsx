@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { DateField } from '@/components/date-field';
@@ -8,23 +8,29 @@ import { ProductImage } from '@/components/product-card';
 import { useToast } from '@/components/toast';
 import { Button, Card, Chip, Divider, EmptyState, Header, Input, KeyValue, Screen, SectionTitle, Stepper, Toggle } from '@/components/ui';
 import { Colors, FontSize, PaymentColors, Radius, Spacing } from '@/constants/theme';
+import { useAuth } from '@/hooks/use-auth';
+import { useRealtime } from '@/hooks/use-realtime';
+import { firebaseErrorMessage } from '@/lib/firebase';
 import { parseNumber, soles, toISODate } from '@/lib/format';
-import { errorMessage, supabase } from '@/lib/supabase';
+import { observarClientesRecientes } from '@/services/clientes';
+import { MAX_ITEMS_VENTA, registrarVenta } from '@/services/ventas';
 import { selectCartSubtotal, useCart } from '@/store/cart';
-import { PAYMENT_METHODS, type Customer, type PaymentMethod, type Sale } from '@/types/db';
+import { PAYMENT_METHODS, type Cliente, type MetodoPago } from '@/types/db';
 
 export default function NewSaleScreen() {
   const router = useRouter();
   const toast = useToast();
+  const { user, profile } = useAuth();
   const items = useCart((s) => s.items);
   const increment = useCart((s) => s.increment);
   const decrement = useCart((s) => s.decrement);
   const clear = useCart((s) => s.clear);
   const subtotal = useCart(selectCartSubtotal);
+  const clientes = useRealtime(observarClientesRecientes);
 
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
-  const [suggestions, setSuggestions] = useState<Customer[]>([]);
+  const [customerAddress, setCustomerAddress] = useState<string | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [withDeliveryDate, setWithDeliveryDate] = useState(false);
   const [deliveryDate, setDeliveryDate] = useState<string | null>(null);
@@ -32,36 +38,26 @@ export default function NewSaleScreen() {
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [deliveryCost, setDeliveryCost] = useState('');
   const [discount, setDiscount] = useState('');
-  const [payment, setPayment] = useState<PaymentMethod>('Yape');
+  const [payment, setPayment] = useState<MetodoPago>('Yape');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Búsqueda de clientes existentes mientras se escribe
-  useEffect(() => {
-    const q = customerName.trim();
-    if (q.length < 2 || !showSuggestions) return;
-    let cancelled = false;
-    const t = setTimeout(async () => {
-      const { data } = await supabase
-        .from('customers')
-        .select('*')
-        .or(`name.ilike.%${q}%,phone.ilike.%${q}%`)
-        .order('created_at', { ascending: false })
-        .limit(5);
-      if (!cancelled) setSuggestions((data ?? []) as Customer[]);
-    }, 250);
-    return () => {
-      cancelled = true;
-      clearTimeout(t);
-    };
-  }, [customerName, showSuggestions]);
+  // Búsqueda de clientes existentes por nombre o teléfono (sobre los 300 más recientes)
+  const suggestions = useMemo(() => {
+    const q = customerName.trim().toLowerCase();
+    if (q.length < 2 || !showSuggestions) return [];
+    const digits = q.replace(/\D/g, '');
+    return (clientes.data ?? [])
+      .filter((c) => c.nombre.toLowerCase().includes(q) || (digits.length >= 3 && c.telefono?.includes(digits)))
+      .slice(0, 5);
+  }, [customerName, showSuggestions, clientes.data]);
 
-  const pickCustomer = (c: Customer) => {
-    setCustomerName(c.name);
-    setCustomerPhone(c.phone ?? '');
-    if (c.address && !deliveryAddress) setDeliveryAddress(c.address);
+  const pickCustomer = (c: Cliente) => {
+    setCustomerName(c.nombre);
+    setCustomerPhone(c.telefono ?? '');
+    setCustomerAddress(c.direccion);
+    if (c.direccion && !deliveryAddress) setDeliveryAddress(c.direccion);
     setShowSuggestions(false);
-    setSuggestions([]);
   };
 
   const discountN = Math.max(0, parseNumber(discount));
@@ -70,6 +66,7 @@ export default function NewSaleScreen() {
 
   const validation = useMemo(() => {
     if (items.length === 0) return 'El carrito está vacío';
+    if (items.length > MAX_ITEMS_VENTA) return `Una boleta admite hasta ${MAX_ITEMS_VENTA} productos distintos`;
     if (customerName.trim().length < 2) return 'Ingresa el nombre del cliente';
     if (customerPhone && customerPhone.replace(/\D/g, '').length < 9) return 'El teléfono debe tener 9 dígitos';
     if (discountN > subtotal) return 'El descuento no puede superar el subtotal';
@@ -83,26 +80,31 @@ export default function NewSaleScreen() {
       toast.show(validation, 'error');
       return;
     }
+    if (!user || !profile) return;
     setSubmitting(true);
-    const { data, error } = await supabase.rpc('create_sale', {
-      p_customer_name: customerName.trim(),
-      p_customer_phone: customerPhone.trim() || null,
-      p_items: items.map((i) => ({ product_id: i.producto.id, quantity: i.cantidad })),
-      p_payment_method: payment,
-      p_discount: discountN,
-      p_delivery_cost: deliveryN,
-      p_delivery_address: withDelivery ? deliveryAddress.trim() : null,
-      p_delivery_date: withDeliveryDate ? deliveryDate : null,
-      p_notes: notes.trim() || null,
-    });
-    setSubmitting(false);
-    if (error) {
-      toast.show(errorMessage(error), 'error');
-      return;
+    try {
+      const venta = await registrarVenta(
+        {
+          clienteNombre: customerName.trim(),
+          clienteTelefono: customerPhone.trim() || null,
+          clienteDireccion: customerAddress,
+          items: items.map((i) => ({ productoId: i.producto.id, cantidad: i.cantidad })),
+          metodoPago: payment,
+          descuento: discountN,
+          deliveryCosto: deliveryN,
+          deliveryDireccion: withDelivery ? deliveryAddress.trim() : null,
+          fechaEntrega: withDeliveryDate ? deliveryDate : null,
+          notas: notes.trim() || null,
+        },
+        { uid: user.uid, nombre: profile.nombre }
+      );
+      clear();
+      router.replace({ pathname: '/venta/exito', params: { id: venta.id } });
+    } catch (e) {
+      toast.show(firebaseErrorMessage(e, 'No se pudo registrar la venta'), 'error');
+    } finally {
+      setSubmitting(false);
     }
-    const sale = data as Sale;
-    clear();
-    router.replace({ pathname: '/venta/exito', params: { id: sale.id } });
   };
 
   return (
@@ -150,7 +152,7 @@ export default function NewSaleScreen() {
                 <Input
                   label="Nombre"
                   icon="person-outline"
-                  placeholder="Nombre del cliente"
+                  placeholder="Nombre o teléfono del cliente"
                   value={customerName}
                   onChangeText={(t) => {
                     setCustomerName(t);
@@ -159,14 +161,14 @@ export default function NewSaleScreen() {
                   onFocus={() => setShowSuggestions(true)}
                   autoCapitalize="words"
                 />
-                {showSuggestions && customerName.trim().length >= 2 && suggestions.length > 0 ? (
+                {suggestions.length > 0 ? (
                   <View style={styles.suggestions}>
                     {suggestions.map((c) => (
                       <Pressable key={c.id} onPress={() => pickCustomer(c)} style={({ pressed }) => [styles.suggestion, pressed && { backgroundColor: Colors.primarySoft }]}>
                         <Ionicons name="person-circle-outline" size={20} color={Colors.primary} />
                         <View style={{ flex: 1 }}>
-                          <Text style={styles.suggestionName}>{c.name}</Text>
-                          {c.phone ? <Text style={styles.cartMeta}>{c.phone}</Text> : null}
+                          <Text style={styles.suggestionName}>{c.nombre}</Text>
+                          {c.telefono ? <Text style={styles.cartMeta}>{c.telefono}</Text> : null}
                         </View>
                       </Pressable>
                     ))}
@@ -190,7 +192,7 @@ export default function NewSaleScreen() {
             <Card style={{ gap: Spacing.sm }}>
               <Toggle
                 label="Programar fecha de entrega"
-                description="La venta aparecerá como pedido pendiente"
+                description="La venta aparecerá en Pedidos > Entregas"
                 value={withDeliveryDate}
                 onChange={(v) => {
                   setWithDeliveryDate(v);
