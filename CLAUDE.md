@@ -24,7 +24,7 @@ Lee también `AGENTS.md` (convenciones de Expo). Antes de dar una tarea por term
 - Cualquier cambio en `firestore.rules` se prueba con `npm run test:reglas` (emulador; necesita Java 11+ en el PATH, por ejemplo el JDK de Android Studio en `C:\Program Files\Android\Android Studio\jbr\bin`) y se despliega con `firebase deploy --only firestore`.
 - Las transacciones críticas viven en archivos `*-core.ts` sin dependencias de React Native (por ejemplo `src/services/ventas-core.ts`) para poder probarlas en el emulador con `scripts/test-reglas.ts`.
 - Las reglas encadenan las escrituras de una venta con `getAfter()`/`existsAfter()`. Firestore permite 20 lecturas de documentos por transacción en las reglas, por eso una venta admite como máximo `MAX_ITEMS_VENTA` (5) productos distintos; ese número está en `ventas-core.ts` y en `firestore.rules`.
-- Stock de productos y materiales: SOLO cambia junto con un movimiento nuevo del kardex en la misma transacción (el ítem guarda ). Nunca escribas  directamente; usa  o .
+- Stock de productos y materiales: SOLO cambia junto con un movimiento nuevo del kardex en la misma transacción (el ítem guarda `ultimoMovimientoId`). Nunca escribas `stock` directamente; usa `src/services/inventario.ts` o `src/services/ventas.ts`.
 - Montos de ventas y resúmenes en Firestore: céntimos enteros (`totalCent`, etc.), para que las reglas validen sumas exactas. La UI los convierte a soles en los servicios.
 
 ---
