@@ -36,7 +36,7 @@ Desarrollada por **GAMA Studio**.
      `nombre` (string), `email` (string), `rol` = `"admin"` (string), `activo` = `true` (boolean).
    - Desde ese momento, los demás usuarios se crean dentro de la app en **Perfil > Gestionar usuarios**.
 
-   Un usuario creado solo en Authentication sin documento en `perfiles` entra como **vendedor** y su perfil se crea automáticamente al iniciar sesión.
+   Un usuario que exista solo en Authentication (creado en la consola o registrado por su cuenta) obtiene al iniciar sesión un perfil de **vendedor inactivo** y ve la pantalla "Tu cuenta está pendiente de aprobación". Solo puede usar la app cuando un admin lo aprueba en **Perfil > Gestionar usuarios**. Las reglas de Firestore impiden que un usuario se cree un perfil activo o se cambie el rol a sí mismo.
 
 ## 1. Configurar Supabase (backend anterior, se retira en la fase 7)
 

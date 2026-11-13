@@ -53,12 +53,21 @@ export async function crearPerfil(uid: string, data: { nombre: string; email: st
   });
 }
 
-/** Si el usuario autenticado aún no tiene perfil (creado desde la consola), lo crea como vendedor. */
+/**
+ * Si el usuario autenticado aún no tiene perfil (creado desde la consola o registrado
+ * por su cuenta en Auth), lo crea como vendedor INACTIVO: queda pendiente hasta que
+ * el admin lo apruebe en "Gestionar usuarios". Las reglas solo permiten esta forma.
+ */
 export async function asegurarPerfil(uid: string, nombre: string, email: string): Promise<Perfil> {
   const existente = await obtenerPerfil(uid);
   if (existente) return existente;
-  await crearPerfil(uid, { nombre, email, rol: 'vendedor' });
-  return { id: uid, nombre, email, rol: 'vendedor', activo: true, creadoEn: new Date() };
+  await crearPerfil(uid, { nombre, email, rol: 'vendedor', activo: false });
+  return { id: uid, nombre, email, rol: 'vendedor', activo: false, creadoEn: new Date() };
+}
+
+/** Aprueba un perfil pendiente (solo admin) */
+export async function aprobarPerfil(uid: string) {
+  await actualizarPerfil(uid, { activo: true });
 }
 
 export async function actualizarPerfil(uid: string, data: Partial<Pick<Perfil, 'nombre' | 'rol' | 'activo'>>) {

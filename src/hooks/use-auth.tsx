@@ -8,10 +8,15 @@ import type { Perfil } from '@/types/db';
 type AuthContextValue = {
   user: User | null;
   profile: Perfil | null;
+  /** Error al cargar el perfil (sin red o sin permisos) */
+  profileError: string | null;
   loading: boolean;
+  /** Sesión iniciada y perfil aprobado por el admin */
+  isActive: boolean;
   isAdmin: boolean;
   signIn: (email: string, password: string) => Promise<string | null>;
   signOut: () => Promise<void>;
+  retryProfile: () => void;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -19,7 +24,9 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Perfil | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [attempt, setAttempt] = useState(0);
 
   // Sesión de Firebase Auth
   useEffect(() => {
@@ -27,13 +34,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(u);
       if (!u) {
         setProfile(null);
+        setProfileError(null);
         setLoading(false);
       }
     });
     return unsubscribe;
   }, []);
 
-  // Perfil en tiempo real (rol / activo). Si no existe, se crea como vendedor.
+  // Perfil en tiempo real (rol / activo). Si no existe, se crea como vendedor pendiente.
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
@@ -44,25 +52,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then((inicial) => {
         if (cancelled) return;
         setProfile(inicial);
+        setProfileError(null);
         setLoading(false);
         unsubscribe = observarPerfil(
           user.uid,
           (p) => {
-            if (cancelled) return;
-            if (p && p.activo === false) {
-              // Usuario desactivado por el admin: cerrar sesión
-              cerrarSesion().catch(() => undefined);
-              return;
-            }
-            if (p) setProfile(p);
+            if (!cancelled && p) setProfile(p);
           },
           () => undefined
         );
       })
-      .catch(() => {
+      .catch((e) => {
         if (cancelled) return;
-        // Sin acceso a Firestore (reglas o red): sesión mínima como vendedor
-        setProfile({ id: user.uid, nombre, email: user.email ?? '', rol: 'vendedor', activo: true, creadoEn: null });
+        // Sin acceso al perfil (sin red o reglas): no se concede acceso a la app.
+        setProfile(null);
+        setProfileError(firebaseErrorMessage(e, 'No se pudo cargar tu perfil'));
         setLoading(false);
       });
 
@@ -70,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       unsubscribe?.();
     };
-  }, [user]);
+  }, [user, attempt]);
 
   const signIn = useCallback(async (email: string, password: string) => {
     try {
@@ -85,9 +89,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await cerrarSesion();
   }, []);
 
+  const retryProfile = useCallback(() => {
+    setLoading(true);
+    setAttempt((n) => n + 1);
+  }, []);
+
   const value = useMemo<AuthContextValue>(
-    () => ({ user, profile, loading, isAdmin: profile?.rol === 'admin', signIn, signOut }),
-    [user, profile, loading, signIn, signOut]
+    () => ({
+      user,
+      profile,
+      profileError,
+      loading,
+      isActive: !!user && profile?.activo === true,
+      isAdmin: profile?.activo === true && profile.rol === 'admin',
+      signIn,
+      signOut,
+      retryProfile,
+    }),
+    [user, profile, profileError, loading, signIn, signOut, retryProfile]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

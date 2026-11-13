@@ -15,7 +15,7 @@ export const unstable_settings = {
 };
 
 function RootNavigator() {
-  const { user, loading } = useAuth();
+  const { user, loading, isActive } = useAuth();
 
   useEffect(() => {
     if (!loading) SplashScreen.hideAsync();
@@ -34,7 +34,12 @@ function RootNavigator() {
         <Stack.Screen name="login" />
       </Stack.Protected>
 
-      <Stack.Protected guard={loggedIn}>
+      {/* Sesión iniciada pero perfil pendiente de aprobación (o sin cargar): sin acceso a pestañas */}
+      <Stack.Protected guard={loggedIn && !isActive}>
+        <Stack.Screen name="pendiente" />
+      </Stack.Protected>
+
+      <Stack.Protected guard={loggedIn && isActive}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="venta/nueva" options={{ presentation: 'modal' }} />
         <Stack.Screen name="venta/exito" options={{ gestureEnabled: false }} />

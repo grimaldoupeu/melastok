@@ -27,6 +27,10 @@ service cloud.firestore {
       return autenticado() && tienePerfil() && perfilActual().rol == 'admin' && perfilActual().activo == true;
     }
 
+    // Usuario con perfil aprobado por el admin. TODAS las colecciones de datos
+    // (productos, ventas, materiales, pedidos, etc.) deben exigir esta función:
+    // un perfil pendiente o desactivado no puede leer ni escribir nada fuera
+    // de su propio documento en "perfiles".
     function esUsuarioActivo() {
       return autenticado() && tienePerfil() && perfilActual().activo == true;
     }
@@ -39,12 +43,14 @@ service cloud.firestore {
     // perfiles/{uid}
     // ------------------------------------------------------------------
     match /perfiles/{uid} {
-      // Cualquier usuario autenticado puede leer perfiles (nombres de vendedores en ventas, etc.)
-      allow read: if autenticado();
+      // Cada usuario puede leer su propio perfil (para saber si está aprobado).
+      // Los demás perfiles solo los leen usuarios activos (nombres de vendedores en ventas, etc.).
+      allow read: if autenticado() && (request.auth.uid == uid || esUsuarioActivo());
 
-      // Un usuario puede crear SOLO su propio perfil y SOLO como vendedor
-      // (primer inicio de sesión de un usuario creado en la consola).
-      // El admin puede crear perfiles de otros usuarios con cualquier rol.
+      // Un usuario puede crear SOLO su propio perfil, SOLO como vendedor y SOLO
+      // INACTIVO (pendiente de aprobación). Así, aunque alguien se registre en Auth
+      // con el firebaseConfig, no obtiene acceso a nada hasta que el admin lo apruebe.
+      // Solo el admin puede crear perfiles con activo == true (Gestionar usuarios).
       allow create: if autenticado()
         && request.resource.data.keys().hasAll(['nombre', 'email', 'rol', 'activo'])
         && request.resource.data.nombre is string
@@ -52,7 +58,7 @@ service cloud.firestore {
         && rolValido(request.resource.data.rol)
         && request.resource.data.activo is bool
         && (
-          (request.auth.uid == uid && request.resource.data.rol == 'vendedor' && request.resource.data.activo == true)
+          (request.auth.uid == uid && request.resource.data.rol == 'vendedor' && request.resource.data.activo == false)
           || esAdmin()
         );
 
@@ -77,6 +83,8 @@ service cloud.firestore {
 
     // ------------------------------------------------------------------
     // Resto de colecciones: por defecto denegado hasta su fase.
+    // Al agregarlas, toda lectura/escritura debe partir de esUsuarioActivo()
+    // (o esAdmin(), que ya implica activo == true).
     // ------------------------------------------------------------------
     match /{document=**} {
       allow read, write: if false;

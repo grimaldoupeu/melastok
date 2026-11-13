@@ -10,7 +10,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { firebaseErrorMessage } from '@/lib/firebase';
 import { initials } from '@/lib/format';
 import { crearUsuario } from '@/services/auth';
-import { actualizarPerfil, observarPerfiles } from '@/services/perfiles';
+import { actualizarPerfil, aprobarPerfil, observarPerfiles } from '@/services/perfiles';
 import type { Perfil, Rol } from '@/types/db';
 
 /** Gestión de usuarios (solo admin): lista en tiempo real, alta de vendedores, rol y activación */
@@ -41,6 +41,18 @@ export default function UsersScreen() {
     }
   };
 
+  const aprobar = async (p: Perfil) => {
+    setBusy(p.id);
+    try {
+      await aprobarPerfil(p.id);
+      toast.show(`${p.nombre} aprobado. Ya puede usar la app.`, 'success');
+    } catch (e) {
+      toast.show(firebaseErrorMessage(e), 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const toggleActivo = async (p: Perfil) => {
     if (p.id === user?.uid) return toast.show('No puedes desactivar tu propio usuario', 'error');
     setBusy(p.id);
@@ -63,11 +75,19 @@ export default function UsersScreen() {
     );
   }
 
+  // Pendientes de aprobación primero (perfiles inactivos que nunca fueron aprobados o fueron desactivados)
+  const pendientes = (perfiles ?? []).filter((p) => !p.activo);
+  const activos = (perfiles ?? []).filter((p) => p.activo);
+  const data: (Perfil | { header: string })[] = [
+    ...(pendientes.length ? [{ header: `Pendientes de aprobación (${pendientes.length})` }, ...pendientes] : []),
+    ...(activos.length ? [{ header: `Activos (${activos.length})` }, ...activos] : []),
+  ];
+
   return (
     <Screen edges={['top', 'bottom']}>
       <Header
         title="Usuarios"
-        subtitle={perfiles ? `${perfiles.length} ${perfiles.length === 1 ? 'usuario' : 'usuarios'}` : undefined}
+        subtitle={perfiles ? `${perfiles.length} ${perfiles.length === 1 ? 'usuario' : 'usuarios'}${pendientes.length ? ` · ${pendientes.length} por aprobar` : ''}` : undefined}
         back
         right={<IconButton icon="person-add" bg={Colors.primary} color={Colors.white} onPress={() => setShowCreate(true)} />}
       />
@@ -77,19 +97,22 @@ export default function UsersScreen() {
         <LoadingView />
       ) : (
         <FlatList
-          data={perfiles}
-          keyExtractor={(p) => p.id}
+          data={data}
+          keyExtractor={(item) => ('header' in item ? `h-${item.header}` : item.id)}
           contentContainerStyle={styles.list}
           ListEmptyComponent={<EmptyState icon="people-outline" title="Sin usuarios" description="Crea el primer vendedor con el botón +" />}
           renderItem={({ item }) => {
+            if ('header' in item) return <Text style={styles.sectionHeader}>{item.header}</Text>;
             const me = item.id === user?.uid;
+            const pendiente = !item.activo;
             return (
-              <Card style={[styles.row, !item.activo && { opacity: 0.6 }]}>
+              <Card style={[styles.row, pendiente && styles.rowPending]}>
                 <Avatar text={initials(item.nombre)} size={44} />
                 <View style={{ flex: 1, gap: 4 }}>
-                  <Row style={{ gap: 6 }}>
+                  <Row style={{ gap: 6, flexWrap: 'wrap' }}>
                     <Text style={styles.name}>{item.nombre}</Text>
                     {me ? <Badge label="Tú" /> : null}
+                    {pendiente ? <Badge label="Sin acceso" bg={Colors.warningSoft} fg="#9A5F10" icon="hourglass-outline" /> : null}
                   </Row>
                   <Text style={styles.email}>{item.email}</Text>
                   <Row style={{ gap: 6, marginTop: 2 }}>
@@ -97,10 +120,12 @@ export default function UsersScreen() {
                     <Chip label="Vendedor" active={item.rol === 'vendedor'} onPress={() => !me && item.rol !== 'vendedor' && cambiarRol(item, 'vendedor')} style={styles.chip} />
                   </Row>
                 </View>
-                {!me ? (
+                {pendiente ? (
+                  <Button title="Aprobar" icon="checkmark" variant="success" size="sm" onPress={() => aprobar(item)} loading={busy === item.id} />
+                ) : !me ? (
                   <Pressable onPress={() => toggleActivo(item)} disabled={busy === item.id} hitSlop={8} style={styles.toggle}>
-                    <Ionicons name={item.activo ? 'checkmark-circle' : 'close-circle'} size={26} color={item.activo ? Colors.success : Colors.textMuted} />
-                    <Text style={styles.toggleText}>{item.activo ? 'Activo' : 'Inactivo'}</Text>
+                    <Ionicons name="checkmark-circle" size={26} color={Colors.success} />
+                    <Text style={styles.toggleText}>Desactivar</Text>
                   </Pressable>
                 ) : null}
               </Card>
@@ -176,6 +201,8 @@ function CreateUserModal({ visible, onClose }: { visible: boolean; onClose: () =
 const styles = StyleSheet.create({
   list: { padding: Spacing.lg, paddingTop: 0, gap: Spacing.sm, paddingBottom: Spacing.xxl },
   row: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, padding: Spacing.md },
+  rowPending: { borderLeftWidth: 4, borderLeftColor: Colors.warning },
+  sectionHeader: { fontSize: FontSize.sm, fontWeight: '800', color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: Spacing.sm },
   name: { fontSize: FontSize.md, fontWeight: '700', color: Colors.text },
   email: { fontSize: FontSize.xs, color: Colors.textMuted },
   chip: { height: 30, paddingHorizontal: 10 },
