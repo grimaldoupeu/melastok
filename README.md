@@ -13,7 +13,32 @@ Desarrollada por **GAMA Studio**.
 - react-native-gifted-charts (gráficos)
 - EAS Build (APK)
 
-## 1. Configurar Supabase
+> **Migración a Firebase en curso.** La autenticación y los perfiles ya usan Firebase (fase 1); el resto de módulos se migra por fases. Mientras tanto, los pasos de Supabase siguen aplicando para catálogo, ventas e inventario.
+
+## 0. Configurar Firebase (Auth + Firestore)
+
+1. Crea un proyecto en [console.firebase.google.com](https://console.firebase.google.com) (plan gratuito Spark basta).
+2. **Authentication > Sign-in method**: habilita *Correo electrónico/contraseña*.
+3. **Firestore Database > Crear base de datos** en modo producción (las reglas se despliegan desde el repo).
+4. **Configuración del proyecto > Tus apps > Agregar app web**: copia el objeto `firebaseConfig` a tu `.env` con el prefijo `EXPO_PUBLIC_FIREBASE_*` (ver `.env.example`).
+5. Despliega reglas e índices:
+
+   ```bash
+   npm i -g firebase-tools
+   firebase login
+   firebase use TU-PROYECTO
+   firebase deploy --only firestore
+   ```
+
+6. **Primer usuario admin** (hasta que exista el script de datos de prueba de la fase 7):
+   - En *Authentication > Users > Add user* crea el correo y la contraseña.
+   - En *Firestore* crea el documento `perfiles/{uid}` (el uid aparece en la lista de usuarios) con los campos:
+     `nombre` (string), `email` (string), `rol` = `"admin"` (string), `activo` = `true` (boolean).
+   - Desde ese momento, los demás usuarios se crean dentro de la app en **Perfil > Gestionar usuarios**.
+
+   Un usuario creado solo en Authentication sin documento en `perfiles` entra como **vendedor** y su perfil se crea automáticamente al iniciar sesión.
+
+## 1. Configurar Supabase (backend anterior, se retira en la fase 7)
 
 1. Crea un proyecto en [supabase.com](https://supabase.com).
 2. Abre **SQL Editor** y ejecuta, en este orden:

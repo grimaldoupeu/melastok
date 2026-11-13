@@ -1,12 +1,22 @@
-export type Role = 'admin' | 'vendedor';
+/* ------------------------------------------------------------------ */
+/* Firebase (nuevo backend)                                            */
+/* ------------------------------------------------------------------ */
 
-export type Profile = {
+export type Rol = 'admin' | 'vendedor';
+
+/** Documento de la colección "perfiles" (id = uid de Firebase Auth) */
+export type Perfil = {
   id: string;
-  full_name: string;
-  role: Role;
-  phone: string | null;
-  created_at: string;
+  nombre: string;
+  email: string;
+  rol: Rol;
+  activo: boolean;
+  creadoEn: Date | null;
 };
+
+/* ------------------------------------------------------------------ */
+/* Supabase (en migración; se eliminará en la fase 7)                  */
+/* ------------------------------------------------------------------ */
 
 export type Category = {
   id: number;

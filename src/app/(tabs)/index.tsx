@@ -76,10 +76,10 @@ export default function HomeScreen() {
     <Screen>
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.greeting}>Hola, {firstName(profile?.full_name) || 'bienvenido'} 👋</Text>
+          <Text style={styles.greeting}>Hola, {firstName(profile?.nombre) || 'bienvenido'} 👋</Text>
           <Text style={styles.date}>{formatLongDate()} · {isAdmin ? 'Administrador' : 'Vendedor'}</Text>
         </View>
-        <Avatar text={initials(profile?.full_name)} size={44} onPress={() => router.push('/perfil')} />
+        <Avatar text={initials(profile?.nombre)} size={44} onPress={() => router.push('/perfil')} />
       </View>
 
       {loading && !data ? (

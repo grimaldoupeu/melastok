@@ -1,114 +1,93 @@
-import type { Session } from '@supabase/supabase-js';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import { errorMessage, supabase } from '@/lib/supabase';
-import type { Profile } from '@/types/db';
+import { firebaseErrorMessage } from '@/lib/firebase';
+import { cerrarSesion, iniciarSesion, observarSesion, type User } from '@/services/auth';
+import { asegurarPerfil, observarPerfil } from '@/services/perfiles';
+import type { Perfil } from '@/types/db';
 
 type AuthContextValue = {
-  session: Session | null;
-  profile: Profile | null;
+  user: User | null;
+  profile: Perfil | null;
   loading: boolean;
   isAdmin: boolean;
   signIn: (email: string, password: string) => Promise<string | null>;
   signOut: () => Promise<void>;
-  refreshProfile: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-async function fetchProfile(userId: string, fallbackName: string): Promise<Profile> {
-  const { data } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
-  if (data) return data as Profile;
-  // Si por alguna razón no existe el perfil (usuario creado antes del trigger), lo creamos.
-  const { data: created } = await supabase
-    .from('profiles')
-    .upsert({ id: userId, full_name: fallbackName })
-    .select('*')
-    .single();
-  return (created as Profile) ?? {
-    id: userId,
-    full_name: fallbackName,
-    role: 'vendedor',
-    phone: null,
-    created_at: new Date().toISOString(),
-  };
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<Perfil | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const loadProfile = useCallback(async (s: Session | null) => {
-    if (!s) {
-      setProfile(null);
-      return;
-    }
-    const meta = (s.user.user_metadata ?? {}) as { full_name?: string };
-    const fallback = meta.full_name || s.user.email?.split('@')[0] || 'Usuario';
-    try {
-      setProfile(await fetchProfile(s.user.id, fallback));
-    } catch {
-      setProfile({
-        id: s.user.id,
-        full_name: fallback,
-        role: 'vendedor',
-        phone: null,
-        created_at: new Date().toISOString(),
-      });
-    }
+  // Sesión de Firebase Auth
+  useEffect(() => {
+    const unsubscribe = observarSesion((u) => {
+      setUser(u);
+      if (!u) {
+        setProfile(null);
+        setLoading(false);
+      }
+    });
+    return unsubscribe;
   }, []);
 
+  // Perfil en tiempo real (rol / activo). Si no existe, se crea como vendedor.
   useEffect(() => {
-    let active = true;
-    supabase.auth
-      .getSession()
-      .then(async ({ data }) => {
-        if (!active) return;
-        setSession(data.session);
-        await loadProfile(data.session);
-      })
-      .finally(() => active && setLoading(false));
+    if (!user) return;
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+    const nombre = user.displayName || user.email?.split('@')[0] || 'Usuario';
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
-      setSession(s);
-      loadProfile(s);
-    });
+    asegurarPerfil(user.uid, nombre, user.email ?? '')
+      .then((inicial) => {
+        if (cancelled) return;
+        setProfile(inicial);
+        setLoading(false);
+        unsubscribe = observarPerfil(
+          user.uid,
+          (p) => {
+            if (cancelled) return;
+            if (p && p.activo === false) {
+              // Usuario desactivado por el admin: cerrar sesión
+              cerrarSesion().catch(() => undefined);
+              return;
+            }
+            if (p) setProfile(p);
+          },
+          () => undefined
+        );
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Sin acceso a Firestore (reglas o red): sesión mínima como vendedor
+        setProfile({ id: user.uid, nombre, email: user.email ?? '', rol: 'vendedor', activo: true, creadoEn: null });
+        setLoading(false);
+      });
+
     return () => {
-      active = false;
-      sub.subscription.unsubscribe();
+      cancelled = true;
+      unsubscribe?.();
     };
-  }, [loadProfile]);
+  }, [user]);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim().toLowerCase(),
-      password,
-    });
-    return error ? errorMessage(error) : null;
+    try {
+      await iniciarSesion(email, password);
+      return null;
+    } catch (e) {
+      return firebaseErrorMessage(e);
+    }
   }, []);
 
   const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
-    setSession(null);
-    setProfile(null);
+    await cerrarSesion();
   }, []);
 
-  const refreshProfile = useCallback(async () => {
-    await loadProfile(session);
-  }, [loadProfile, session]);
-
   const value = useMemo<AuthContextValue>(
-    () => ({
-      session,
-      profile,
-      loading,
-      isAdmin: profile?.role === 'admin',
-      signIn,
-      signOut,
-      refreshProfile,
-    }),
-    [session, profile, loading, signIn, signOut, refreshProfile]
+    () => ({ user, profile, loading, isAdmin: profile?.rol === 'admin', signIn, signOut }),
+    [user, profile, loading, signIn, signOut]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

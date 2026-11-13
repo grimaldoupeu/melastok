@@ -6,7 +6,7 @@ import { Logo } from '@/components/logo';
 import { Banner, Button, Card, Input, Screen } from '@/components/ui';
 import { Colors, FontSize, Spacing } from '@/constants/theme';
 import { useAuth } from '@/hooks/use-auth';
-import { isSupabaseConfigured } from '@/lib/supabase';
+import { isFirebaseConfigured } from '@/lib/firebase';
 
 export default function LoginScreen() {
   const { signIn } = useAuth();
@@ -35,11 +35,11 @@ export default function LoginScreen() {
             <Logo size={96} />
           </View>
 
-          {!isSupabaseConfigured ? (
+          {!isFirebaseConfigured ? (
             <Banner
               tone="danger"
               icon="warning"
-              text="Falta configurar Supabase. Copia .env.example a .env y completa EXPO_PUBLIC_SUPABASE_URL y EXPO_PUBLIC_SUPABASE_ANON_KEY."
+              text="Falta configurar Firebase. Copia .env.example a .env y completa las variables EXPO_PUBLIC_FIREBASE_*."
             />
           ) : null}
 

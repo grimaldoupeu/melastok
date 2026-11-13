@@ -44,3 +44,8 @@ example
 
 # env local
 .env
+
+# Firebase
+.firebase/
+serviceAccount.json
+firebase-debug.log

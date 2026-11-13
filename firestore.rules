@@ -1,0 +1,85 @@
+rules_version = '2';
+
+// =====================================================================
+//  MelaStock · Reglas de Firestore
+//  Fase 1: perfiles y roles. Las demás colecciones se agregan por fase.
+//  Desplegar: firebase deploy --only firestore
+// =====================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ------------------------------------------------------------------
+    // Helpers
+    // ------------------------------------------------------------------
+    function autenticado() {
+      return request.auth != null;
+    }
+
+    function perfilActual() {
+      return get(/databases/$(database)/documents/perfiles/$(request.auth.uid)).data;
+    }
+
+    function tienePerfil() {
+      return exists(/databases/$(database)/documents/perfiles/$(request.auth.uid));
+    }
+
+    function esAdmin() {
+      return autenticado() && tienePerfil() && perfilActual().rol == 'admin' && perfilActual().activo == true;
+    }
+
+    function esUsuarioActivo() {
+      return autenticado() && tienePerfil() && perfilActual().activo == true;
+    }
+
+    function rolValido(rol) {
+      return rol in ['admin', 'vendedor'];
+    }
+
+    // ------------------------------------------------------------------
+    // perfiles/{uid}
+    // ------------------------------------------------------------------
+    match /perfiles/{uid} {
+      // Cualquier usuario autenticado puede leer perfiles (nombres de vendedores en ventas, etc.)
+      allow read: if autenticado();
+
+      // Un usuario puede crear SOLO su propio perfil y SOLO como vendedor
+      // (primer inicio de sesión de un usuario creado en la consola).
+      // El admin puede crear perfiles de otros usuarios con cualquier rol.
+      allow create: if autenticado()
+        && request.resource.data.keys().hasAll(['nombre', 'email', 'rol', 'activo'])
+        && request.resource.data.nombre is string
+        && request.resource.data.email is string
+        && rolValido(request.resource.data.rol)
+        && request.resource.data.activo is bool
+        && (
+          (request.auth.uid == uid && request.resource.data.rol == 'vendedor' && request.resource.data.activo == true)
+          || esAdmin()
+        );
+
+      // El usuario puede cambiar solo su nombre; el admin puede cambiar nombre, rol y activo
+      // (pero no su propio rol ni desactivarse a sí mismo).
+      allow update: if autenticado() && (
+          (
+            request.auth.uid == uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nombre', 'actualizadoEn'])
+          )
+          || (
+            esAdmin()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nombre', 'rol', 'activo', 'actualizadoEn'])
+            && rolValido(request.resource.data.rol)
+            && request.resource.data.activo is bool
+            && (request.auth.uid != uid || (request.resource.data.rol == 'admin' && request.resource.data.activo == true))
+          )
+        );
+
+      allow delete: if esAdmin() && request.auth.uid != uid;
+    }
+
+    // ------------------------------------------------------------------
+    // Resto de colecciones: por defecto denegado hasta su fase.
+    // ------------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

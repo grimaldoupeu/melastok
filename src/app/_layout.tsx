@@ -15,14 +15,14 @@ export const unstable_settings = {
 };
 
 function RootNavigator() {
-  const { session, loading } = useAuth();
+  const { user, loading } = useAuth();
 
   useEffect(() => {
     if (!loading) SplashScreen.hideAsync();
   }, [loading]);
 
   if (loading) return null;
-  const loggedIn = !!session;
+  const loggedIn = !!user;
 
   return (
     <Stack
@@ -43,6 +43,7 @@ function RootNavigator() {
         <Stack.Screen name="producto/[id]" options={{ presentation: 'modal' }} />
         <Stack.Screen name="material/[id]" options={{ presentation: 'modal' }} />
         <Stack.Screen name="perfil" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="usuarios" />
       </Stack.Protected>
     </Stack>
   );
