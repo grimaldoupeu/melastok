@@ -1,26 +1,33 @@
 {
   "expo": {
-    "name": "APK_MelaminaStok",
-    "slug": "APK_MelaminaStok",
+    "name": "MelaStock",
+    "slug": "melastock",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "apkmelaminastok",
-    "userInterfaceStyle": "automatic",
-    "ios": {
-      "icon": "./assets/expo.icon"
-    },
+    "scheme": "melastock",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F7F1E8",
+    "primaryColor": "#7A4A2A",
+    "description": "Control de ventas, inventario y pedidos para talleres de muebles de melamina. Desarrollado por GAMA Studio.",
     "android": {
+      "package": "com.gamastudio.melastock",
+      "versionCode": 1,
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#7A4A2A",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": ["android.permission.CAMERA", "android.permission.READ_MEDIA_IMAGES"]
+    },
+    "ios": {
+      "bundleIdentifier": "com.gamastudio.melastock",
+      "supportsTablet": true
     },
     "web": {
-      "output": "server",
+      "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
@@ -28,15 +35,28 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#7A4A2A",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 160
         }
-      ]
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "MelaStock necesita acceso a tus fotos para agregar imágenes de productos.",
+          "cameraPermission": "MelaStock necesita la cámara para tomar fotos de productos.",
+          "microphonePermission": false
+        }
+      ],
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "developer": "GAMA Studio",
+      "eas": {}
     }
   }
 }

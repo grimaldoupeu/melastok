@@ -1,56 +1,114 @@
-# Welcome to your Expo app 👋
+# MelaStock
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+App Android para talleres y tiendas de muebles de melamina en Perú: catálogo, ventas con boleta por WhatsApp, inventario de productos y materiales, pedidos y reportes.
 
-## Get started
+Desarrollada por **GAMA Studio**.
 
-1. Install dependencies
+## Stack
 
-   ```bash
-   npm install
+- React Native + Expo SDK 58 + TypeScript
+- Expo Router (5 pestañas: Inicio, Catálogo, Inventario, Pedidos, Reportes)
+- Supabase (Postgres, Auth, Storage, Realtime)
+- Zustand (carrito)
+- react-native-gifted-charts (gráficos)
+- EAS Build (APK)
+
+## 1. Configurar Supabase
+
+1. Crea un proyecto en [supabase.com](https://supabase.com).
+2. Abre **SQL Editor** y ejecuta, en este orden:
+   - `supabase/schema.sql` (tablas, funciones, RLS, realtime y bucket de fotos)
+   - `supabase/seed.sql` (categorías, productos y materiales de ejemplo; opcional)
+3. Crea los usuarios en **Authentication > Users > Add user** (email + contraseña, marca "Auto Confirm User").
+   En *User Metadata* puedes poner el nombre que verá el saludo: `{"full_name": "Carlos"}`.
+4. Para convertir un usuario en administrador, ejecuta en SQL Editor:
+
+   ```sql
+   update public.profiles set role = 'admin' where id = '<uuid del usuario>';
    ```
 
-2. Start the app
+   Los usuarios nuevos son `vendedor` por defecto.
 
-   ```bash
-   npx expo start
-   ```
+| Rol | Permisos |
+| --- | --- |
+| vendedor | Registrar ventas, cambiar estado de pedidos, ver inventario y registrar movimientos de materiales |
+| admin | Todo lo anterior + crear/editar/eliminar productos y materiales, cancelar ventas (devuelve stock) |
 
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **src/app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+## 2. Variables de entorno
 
 ```bash
-npm run reset-project
+cp .env.example .env
 ```
 
-This command will move the starter code to the **example** directory and create a blank **src/app** directory where you can start developing.
+Completa `EXPO_PUBLIC_SUPABASE_URL` y `EXPO_PUBLIC_SUPABASE_ANON_KEY` (Dashboard > Project Settings > API).
+Opcionalmente `EXPO_PUBLIC_BUSINESS_NAME`, `EXPO_PUBLIC_BUSINESS_PHONE` y `EXPO_PUBLIC_BUSINESS_ADDRESS` para la cabecera de la boleta de WhatsApp.
 
-### Other setup steps
+## 3. Ejecutar en desarrollo
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+```bash
+npm install
+npx expo start
+```
 
-## Learn more
+La app usa módulos nativos (image picker, date picker, svg), así que necesita un **development build** en lugar de Expo Go:
 
-To learn more about developing your project with Expo, look at the following resources:
+```bash
+npx eas-cli@latest build -p android --profile development
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Instala el APK resultante en el teléfono y luego `npx expo start` para conectarte.
 
-## Join the community
+## 4. Generar el APK
 
-Join our community of developers creating universal apps.
+```bash
+npx eas-cli@latest login
+npx eas-cli@latest build -p android --profile preview
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+El perfil `preview` de `eas.json` genera un `.apk` instalable directamente (no `.aab`). Agrega las variables de entorno al proyecto EAS antes de compilar:
+
+```bash
+npx eas-cli@latest env:create --scope project --name EXPO_PUBLIC_SUPABASE_URL --value https://xxx.supabase.co --environment preview
+npx eas-cli@latest env:create --scope project --name EXPO_PUBLIC_SUPABASE_ANON_KEY --value eyJ... --environment preview
+```
+
+## Scripts
+
+| Comando | Descripción |
+| --- | --- |
+| `npm start` | Servidor de desarrollo |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm run lint` | ESLint |
+| `npm run build:apk` | `eas build -p android --profile preview` |
+
+## Estructura
+
+```
+src/
+  app/                 Rutas (Expo Router)
+    _layout.tsx        Proveedores + guardas de autenticación
+    login.tsx
+    (tabs)/            Inicio, Catálogo, Inventario, Pedidos, Reportes
+    venta/nueva.tsx    Carrito y cobro
+    venta/exito.tsx    "¡Venta registrada!" + boleta por WhatsApp
+    venta/[id].tsx     Detalle de venta / pedido
+    ventas.tsx         Historial de ventas
+    producto/[id].tsx  Detalle (vendedor) / editor (admin). id = "nuevo" para crear
+    material/[id].tsx  Stock, movimientos y editor de material
+    perfil.tsx
+  components/          UI base, tarjetas, toast, selector de fecha
+  hooks/               useAuth, useQuery (foco + realtime)
+  lib/                 supabase, formato (S/, fechas Lima), boleta WhatsApp, storage
+  store/cart.ts        Carrito (Zustand)
+  types/db.ts          Tipos de la base de datos
+supabase/
+  schema.sql           Esquema completo
+  seed.sql             Datos de ejemplo
+```
+
+## Notas de diseño
+
+- **Boleta correlativa y stock**: la venta se registra con la función SQL `create_sale`, que en una sola transacción genera el número `B001-00000001`, valida y descuenta el stock e inserta los ítems. La serie se puede cambiar en la tabla `receipt_counter`.
+- **Pedidos**: toda venta con fecha de entrega nace como pedido `pendiente` y avanza por `en_produccion` → `listo` → `entregado`. Una venta sin fecha de entrega se registra directamente como `entregado`.
+- **Zona horaria**: todos los cálculos de "hoy" y "este mes" usan America/Lima (UTC-5, sin horario de verano).
+- **Tiempo real**: el panel de inicio, pedidos y reportes se actualizan al instante con Supabase Realtime sobre `sales` y `products`.

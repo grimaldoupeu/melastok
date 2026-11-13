@@ -1,18 +1,62 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
+import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
+import { ToastProvider } from '@/components/toast';
+import { Colors } from '@/constants/theme';
+import { AuthProvider, useAuth } from '@/hooks/use-auth';
 
 SplashScreen.preventAutoHideAsync();
 
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+export const unstable_settings = {
+  anchor: '(tabs)',
+};
+
+function RootNavigator() {
+  const { session, loading } = useAuth();
+
+  useEffect(() => {
+    if (!loading) SplashScreen.hideAsync();
+  }, [loading]);
+
+  if (loading) return null;
+  const loggedIn = !!session;
+
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AnimatedSplashOverlay />
-      <AppTabs />
-    </ThemeProvider>
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: Colors.background },
+      }}>
+      <Stack.Protected guard={!loggedIn}>
+        <Stack.Screen name="login" />
+      </Stack.Protected>
+
+      <Stack.Protected guard={loggedIn}>
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="venta/nueva" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="venta/exito" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="venta/[id]" />
+        <Stack.Screen name="ventas" />
+        <Stack.Screen name="producto/[id]" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="material/[id]" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="perfil" options={{ presentation: 'modal' }} />
+      </Stack.Protected>
+    </Stack>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <SafeAreaProvider>
+      <AuthProvider>
+        <ToastProvider>
+          <StatusBar style="dark" />
+          <RootNavigator />
+        </ToastProvider>
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }
