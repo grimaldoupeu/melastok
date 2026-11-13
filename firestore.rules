@@ -556,14 +556,23 @@ service cloud.firestore {
     // ==================================================================
     function resumenCampos() {
       return ['dia', 'numVentas', 'totalCent', 'costoCent', 'unidades', 'porMetodoCent', 'pagosPedidosCent',
-              'ultimaVentaId', 'ultimoPago', 'actualizadoEn'];
+              'pagosPedidosPorMetodoCent', 'ultimaVentaId', 'ultimoPago', 'actualizadoEn'];
+    }
+
+    function cerosPorMetodo() {
+      return { 'Yape': 0, 'Plin': 0, 'Efectivo': 0, 'Tarjeta': 0 };
+    }
+
+    // Resúmenes creados antes de la fase 6 no tienen el desglose de pagos por método
+    function pagosPorMetodoPrevio(p) {
+      return p.get('pagosPedidosPorMetodoCent', cerosPorMetodo());
     }
 
     function resumenPrevio(dia) {
       return resource == null
         ? { 'dia': dia, 'numVentas': 0, 'totalCent': 0, 'costoCent': 0, 'unidades': 0,
-            'porMetodoCent': { 'Yape': 0, 'Plin': 0, 'Efectivo': 0, 'Tarjeta': 0 }, 'pagosPedidosCent': 0,
-            'ultimaVentaId': null, 'ultimoPago': null }
+            'porMetodoCent': cerosPorMetodo(), 'pagosPedidosCent': 0,
+            'pagosPedidosPorMetodoCent': cerosPorMetodo(), 'ultimaVentaId': null, 'ultimoPago': null }
         : resource.data;
     }
 
@@ -575,6 +584,7 @@ service cloud.firestore {
         && r.costoCent == p.costoCent + signo * v.costoTotalCent
         && r.unidades == p.unidades + signo * v.unidades
         && r.pagosPedidosCent == p.pagosPedidosCent
+        && r.pagosPedidosPorMetodoCent == pagosPorMetodoPrevio(p)
         && r.ultimoPago == p.get('ultimoPago', null)
         && r.porMetodoCent.diff(p.porMetodoCent).affectedKeys().hasOnly([v.metodoPago])
         && r.porMetodoCent[v.metodoPago] == p.porMetodoCent[v.metodoPago] + signo * v.totalCent;
@@ -601,6 +611,8 @@ service cloud.firestore {
         && pago.dia == dia
         && pago.usuarioId == request.auth.uid
         && r.pagosPedidosCent == p.pagosPedidosCent + pago.montoCent
+        && r.pagosPedidosPorMetodoCent.diff(pagosPorMetodoPrevio(p)).affectedKeys().hasOnly([pago.metodo])
+        && r.pagosPedidosPorMetodoCent[pago.metodo] == pagosPorMetodoPrevio(p)[pago.metodo] + pago.montoCent
         && r.numVentas == p.numVentas
         && r.totalCent == p.totalCent
         && r.costoCent == p.costoCent
@@ -695,8 +707,11 @@ service cloud.firestore {
         && esTextoOpcional(h.nota);
     }
 
+    // diasPago es opcional porque los pedidos de la fase 5 no lo tienen
     function pedidoDatosValidos(d) {
-      return exactamente(d, pedidoCampos())
+      return d.keys().hasAll(pedidoCampos())
+        && d.keys().hasOnly(pedidoCampos().concat(['diasPago']))
+        && d.get('diasPago', []) is list
         && d.clienteNombre is string && d.clienteNombre.size() >= 1 && d.clienteNombre.size() <= 100
         && esTextoOpcional(d.clienteId)
         && esTextoOpcional(d.clienteTelefono)
@@ -732,6 +747,7 @@ service cloud.firestore {
         && d.numero == contador.ultimo
         && contador.ultimoPedidoId == id
         && d.codigo is string && d.codigo.matches(contador.serie + '-[0-9]{4,}')
+        && d.diasPago == (d.pagos.size() == 0 ? [] : [d.pagos[0].dia])
         && (
           d.pagos.size() == 0
             ? d.pagadoCent == 0
@@ -762,8 +778,10 @@ service cloud.firestore {
       let o = resource.data;
       let total = n.pagos.size();
       let pago = n.pagos[total - 1];
-      return cambiaSolo(['pagos', 'pagadoCent', 'saldoCent', 'actualizadoEn'])
+      let dias = o.get('diasPago', []);
+      return cambiaSolo(['pagos', 'pagadoCent', 'saldoCent', 'diasPago', 'actualizadoEn'])
         && esUsuarioActivo()
+        && n.get('diasPago', []) == (dias.hasAny([pago.dia]) ? dias : dias.concat([pago.dia]))
         && total == o.pagos.size() + 1
         // (una porción vacía [0:0] no se puede comparar: el primer pago se trata aparte)
         && (total == 1 || n.pagos[0:total - 1] == o.pagos)

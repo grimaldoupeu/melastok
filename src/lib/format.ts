@@ -172,3 +172,71 @@ export function parseNumber(text: string | null | undefined): number {
   const n = Number(String(text).replace(',', '.').replace(/[^\d.-]/g, ''));
   return Number.isFinite(n) ? n : 0;
 }
+
+/* ------------------------------------------------------------------ */
+/* Aritmética de fechas 'YYYY-MM-DD' (días de Lima)                    */
+/* ------------------------------------------------------------------ */
+
+function partesISO(iso: string) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return { y, m, d };
+}
+
+function isoDeUTC(t: Date): string {
+  return t.toISOString().slice(0, 10);
+}
+
+/** Suma (o resta) días a una fecha 'YYYY-MM-DD' */
+export function addDaysISO(iso: string, dias: number): string {
+  const { y, m, d } = partesISO(iso);
+  return isoDeUTC(new Date(Date.UTC(y, m - 1, d + dias)));
+}
+
+/** Lunes de la semana de la fecha */
+export function startOfWeekISO(iso: string): string {
+  const { y, m, d } = partesISO(iso);
+  const wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = domingo
+  return addDaysISO(iso, wd === 0 ? -6 : 1 - wd);
+}
+
+export function startOfMonthISO(iso: string): string {
+  const { y, m } = partesISO(iso);
+  return `${y}-${String(m).padStart(2, '0')}-01`;
+}
+
+export function endOfMonthISO(iso: string): string {
+  const { y, m } = partesISO(iso);
+  return isoDeUTC(new Date(Date.UTC(y, m, 0)));
+}
+
+/** Suma meses (al día 1 del mes resultante) */
+export function addMonthsISO(iso: string, meses: number): string {
+  const { y, m } = partesISO(iso);
+  return isoDeUTC(new Date(Date.UTC(y, m - 1 + meses, 1)));
+}
+
+/** Lista de días entre dos fechas (ambas incluidas) */
+export function rangoDiasISO(desde: string, hasta: string): string[] {
+  const out: string[] = [];
+  for (let d = desde; d <= hasta && out.length < 400; d = addDaysISO(d, 1)) out.push(d);
+  return out;
+}
+
+/** Inicio del día 'YYYY-MM-DD' (00:00 Lima) como Date */
+export function limaStartOfISO(iso: string): Date {
+  const { y, m, d } = partesISO(iso);
+  return new Date(Date.UTC(y, m - 1, d, 5, 0, 0, 0));
+}
+
+/** Nombre de mes y año: Noviembre 2026 */
+export function monthYearISO(iso: string): string {
+  const { y, m } = partesISO(iso);
+  const nombre = MONTHS[m - 1];
+  return `${nombre.charAt(0).toUpperCase()}${nombre.slice(1)} ${y}`;
+}
+
+/** Variación porcentual entre dos valores (null si el anterior es 0) */
+export function variacion(actual: number, anterior: number): number | null {
+  if (!anterior) return null;
+  return ((actual - anterior) / anterior) * 100;
+}

@@ -5,6 +5,7 @@
 import {
   collection,
   doc,
+  getDocs,
   limit,
   onSnapshot,
   orderBy,
@@ -133,6 +134,19 @@ export function observarEntregas(filtro: FiltroEntregas, cb: (ventas: Venta[]) =
         : filtro === 'cancelado'
           ? query(base, where('estadoEntrega', '==', 'cancelado'), orderBy('fecha', 'desc'), limit(100))
           : query(base, where('estadoEntrega', '==', filtro), orderBy('fechaEntrega', 'asc'), limit(200));
+  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => toVenta(d)!)), onError);
+}
+
+/** Ventas entre dos instantes [desde, hasta) — para reportes (productos y vendedores) */
+export async function listarVentasEntre(desde: Date, hasta: Date, max = 3000): Promise<Venta[]> {
+  const q = query(collection(db, COL), where('fecha', '>=', desde), where('fecha', '<', hasta), orderBy('fecha', 'desc'), limit(max));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => toVenta(d)!);
+}
+
+/** Ventas de un día (cierre de caja), en tiempo real */
+export function observarVentasDelDia(dia: string, cb: (ventas: Venta[]) => void, onError?: (e: unknown) => void): Unsubscribe {
+  const q = query(collection(db, COL), where('dia', '==', dia), limit(1000));
   return onSnapshot(q, (snap) => cb(snap.docs.map((d) => toVenta(d)!)), onError);
 }
 

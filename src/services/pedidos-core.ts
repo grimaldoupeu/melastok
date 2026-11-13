@@ -67,10 +67,13 @@ function escribirResumenConPago(
   previo: DocumentData | null,
   dia: string,
   montoCent: number,
+  metodo: MetodoPago,
   pedidoId: string,
   indice: number
 ) {
   const base = previo ?? { ...resumenVacio(dia), ultimaVentaId: null };
+  const porMetodoPagos = { ...resumenVacio(dia).porMetodoCent, ...(base.pagosPedidosPorMetodoCent ?? {}) };
+  porMetodoPagos[metodo] = Number(porMetodoPagos[metodo] ?? 0) + montoCent;
   tx.set(ref, {
     dia,
     numVentas: Number(base.numVentas ?? 0),
@@ -79,6 +82,7 @@ function escribirResumenConPago(
     unidades: Number(base.unidades ?? 0),
     porMetodoCent: { ...resumenVacio(dia).porMetodoCent, ...(base.porMetodoCent ?? {}) },
     pagosPedidosCent: Number(base.pagosPedidosCent ?? 0) + montoCent,
+    pagosPedidosPorMetodoCent: porMetodoPagos,
     ultimaVentaId: base.ultimaVentaId ?? null,
     ultimoPago: { pedidoId, indice },
     actualizadoEn: serverTimestamp(),
@@ -125,6 +129,7 @@ export async function crearPedidoTx(db: Firestore, input: NuevoPedidoInput, vend
       etapa: 'cotizado',
       historialEtapas: [{ etapa: 'cotizado', fecha: Timestamp.now(), usuarioId: vendedor.uid, usuarioNombre: vendedor.nombre, nota: null }],
       pagos,
+      diasPago: pagos.length ? [input.dia] : [],
       fechaEntrega: input.fechaEntrega,
       vendedorId: vendedor.uid,
       vendedorNombre: vendedor.nombre,
@@ -133,7 +138,7 @@ export async function crearPedidoTx(db: Firestore, input: NuevoPedidoInput, vend
       ultimoMovimientoId: null,
     });
     tx.set(contadorRef, { serie, ultimo: numero, ultimoPedidoId: pedidoRef.id });
-    if (resumen) escribirResumenConPago(tx, resumen.ref, resumen.previo, input.dia, adelantoCent, pedidoRef.id, 0);
+    if (resumen) escribirResumenConPago(tx, resumen.ref, resumen.previo, input.dia, adelantoCent, input.adelanto!.metodo, pedidoRef.id, 0);
     return { id: pedidoRef.id, codigo };
   });
 }
@@ -162,13 +167,15 @@ export async function registrarPagoTx(
     const indice = pagos.length;
     pagos.push(nuevoPago(montoCent, input.metodo, input.nota, input.dia, usuario));
     const pagadoCent = Number(p.pagadoCent ?? 0) + montoCent;
+    const diasPago = (p.diasPago ?? []) as string[];
     tx.update(pedidoRef, {
       pagos,
+      diasPago: diasPago.includes(input.dia) ? diasPago : [...diasPago, input.dia],
       pagadoCent,
       saldoCent: Number(p.precioCent) - pagadoCent,
       actualizadoEn: serverTimestamp(),
     });
-    escribirResumenConPago(tx, resumen.ref, resumen.previo, input.dia, montoCent, input.pedidoId, indice);
+    escribirResumenConPago(tx, resumen.ref, resumen.previo, input.dia, montoCent, input.metodo, input.pedidoId, indice);
   });
 }
 

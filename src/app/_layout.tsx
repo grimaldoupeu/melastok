@@ -53,6 +53,7 @@ function RootNavigator() {
         <Stack.Screen name="proveedor/[id]" options={{ presentation: 'modal' }} />
         <Stack.Screen name="kardex" />
         <Stack.Screen name="pedido/[id]" />
+        <Stack.Screen name="caja" />
       </Stack.Protected>
     </Stack>
   );

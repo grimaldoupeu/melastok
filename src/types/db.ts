@@ -182,6 +182,18 @@ export type Pedido = {
   actualizadoEn: Date | null;
 };
 
+/** Documento de la colección "resumen_diario" (id = día YYYY-MM-DD), montos en soles para la UI */
+export type ResumenDiario = {
+  dia: string;
+  numVentas: number;
+  totalVentas: number;
+  costoVentas: number;
+  unidades: number;
+  ventasPorMetodo: Record<MetodoPago, number>;
+  pagosPedidos: number;
+  pagosPedidosPorMetodo: Record<MetodoPago, number>;
+};
+
 /** Tipos de material del taller */
 export type TipoMaterial = 'plancha' | 'tapacanto' | 'bisagra' | 'corredera' | 'tornilleria' | 'otro';
 

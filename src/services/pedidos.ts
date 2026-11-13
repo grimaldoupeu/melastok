@@ -5,6 +5,7 @@
 import {
   collection,
   doc,
+  getDocs,
   limit,
   onSnapshot,
   orderBy,
@@ -96,6 +97,27 @@ export function observarPedidos(filtro: FiltroPedidos, cb: (p: Pedido[]) => void
 export function observarPedidosAbiertos(cb: (p: Pedido[]) => void, onError?: (e: unknown) => void): Unsubscribe {
   const q = query(collection(db, COL), where('etapa', 'in', [...ETAPAS_EN_PROCESO, 'entrega']), orderBy('fechaEntrega', 'asc'), limit(200));
   return onSnapshot(q, (snap) => cb(snap.docs.map((d) => toPedido(d)!)), onError);
+}
+
+/** Pedidos que recibieron algún pago en un día (cierre de caja) */
+export function observarPedidosConPagosEn(dia: string, cb: (p: Pedido[]) => void, onError?: (e: unknown) => void): Unsubscribe {
+  const q = query(collection(db, COL), where('diasPago', 'array-contains', dia), limit(500));
+  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => toPedido(d)!)), onError);
+}
+
+/** Pedidos entregados actualizados desde una fecha (reportes; filtrar luego por fecha de entrega real) */
+export async function listarPedidosEntregadosDesde(desde: Date): Promise<Pedido[]> {
+  const q = query(collection(db, COL), where('etapa', '==', 'entregado'), where('actualizadoEn', '>=', desde), orderBy('actualizadoEn', 'desc'), limit(500));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => toPedido(d)!);
+}
+
+/** Fecha en que el pedido pasó a "entregado" (la última vez) */
+export function fechaEntregado(p: Pedido): Date | null {
+  for (let i = p.historialEtapas.length - 1; i >= 0; i--) {
+    if (p.historialEtapas[i].etapa === 'entregado') return p.historialEtapas[i].fecha;
+  }
+  return null;
 }
 
 export function observarPedido(id: string, cb: (p: Pedido | null) => void, onError?: (e: unknown) => void): Unsubscribe {

@@ -443,11 +443,15 @@ async function main() {
     const despues = (await resumenHoy()).pagosPedidosCent;
     const p = await pedidoDoc(pedidoB);
     if (despues - antes !== 50025) throw new Error(`resumen sumó ${despues - antes}`);
+    if ((await resumenHoy()).pagosPedidosPorMetodoCent.Yape < 50025) throw new Error('no sumó a Yape');
+    if (JSON.stringify((await pedidoDoc(r.id)).diasPago) !== JSON.stringify([dia])) throw new Error('diasPago incorrecto');
     if (p.saldoCent !== 180050 - 50025) throw new Error(`saldo ${p.saldoCent}`);
   });
   await prueba('vendedor registra pago parcial (saldo y resumen)', 'permitir', async () => {
     const antes = (await resumenHoy()).pagosPedidosCent;
+    const efectivoAntes = (await resumenHoy()).pagosPedidosPorMetodoCent.Efectivo;
     await registrarPagoTx(dbV, { pedidoId: pedidoB, monto: 300, metodo: 'Efectivo', nota: 'Segundo pago', dia }, VEND);
+    if ((await resumenHoy()).pagosPedidosPorMetodoCent.Efectivo - efectivoAntes !== 30000) throw new Error('no sumó a Efectivo');
     const p = await pedidoDoc(pedidoB);
     if (p.pagos.length !== 2 || p.pagadoCent !== 80025) throw new Error(`pagado ${p.pagadoCent}`);
     if ((await resumenHoy()).pagosPedidosCent - antes !== 30000) throw new Error('el resumen no sumó el pago');
@@ -515,6 +519,28 @@ async function main() {
       tx.set(rRef, { ...r, pagosPedidosCent: r.pagosPedidosCent + 100, ultimoPago: { pedidoId: pedidoB, indice: p.pagos.length }, actualizadoEn: serverTimestamp() });
     })
   );
+  await prueba('pago anotado en otro método en la caja', 'denegar', () =>
+    runTransaction(dbV, async (tx) => {
+      const ref = doc(dbV, 'pedidos', pedidoB);
+      const p = (await tx.get(ref)).data()!;
+      const rRef = doc(dbV, 'resumen_diario', dia);
+      const r = (await tx.get(rRef)).data()!;
+      const pagos = [...p.pagos, { montoCent: 100, metodo: 'Yape', fecha: Timestamp.now(), dia, usuarioId: VEND.uid, usuarioNombre: VEND.nombre, nota: null }];
+      tx.update(ref, { pagos, diasPago: p.diasPago, pagadoCent: p.pagadoCent + 100, saldoCent: p.saldoCent - 100, actualizadoEn: serverTimestamp() });
+      tx.set(rRef, {
+        ...r,
+        pagosPedidosCent: r.pagosPedidosCent + 100,
+        pagosPedidosPorMetodoCent: { ...r.pagosPedidosPorMetodoCent, Efectivo: r.pagosPedidosPorMetodoCent.Efectivo + 100 },
+        ultimoPago: { pedidoId: pedidoB, indice: p.pagos.length },
+        actualizadoEn: serverTimestamp(),
+      });
+    })
+  );
+  await prueba('venta deja intacto el desglose de pagos por método', 'permitir', async () => {
+    const antes = (await resumenHoy()).pagosPedidosPorMetodoCent;
+    await registrarVentaTx(dbV, venta([{ productoId: 'p4', cantidad: 1 }], { metodoPago: 'Tarjeta' }), VEND);
+    if (JSON.stringify((await resumenHoy()).pagosPedidosPorMetodoCent) !== JSON.stringify(antes)) throw new Error('la venta cambió el desglose');
+  });
   await prueba('pago fechado ayer', 'denegar', () => registrarPagoTx(dbV, { pedidoId: pedidoB, monto: 10, metodo: 'Yape', nota: null, dia: '2020-01-01' }, VEND));
   await prueba('pago mayor al saldo se rechaza en la app', 'denegar', () =>
     registrarPagoTx(dbV, { pedidoId: pedidoB, monto: 999999, metodo: 'Yape', nota: null, dia }, VEND).catch((e) => {
