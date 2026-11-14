@@ -2,8 +2,10 @@
  * Utilidades comunes de los scripts de administración (seed, reset, backup, restore).
  *
  * Se conectan con firebase-admin usando la clave de cuenta de servicio:
- *   - serviceAccount.json en la raíz del proyecto (está en .gitignore), o
+ *   - con --cliente <nombre>: clientes/<nombre>/serviceAccount.json (proyecto de ese cliente),
+ *   - si no: serviceAccount.json en la raíz (proyecto de demostración), o
  *   - la ruta indicada en la variable GOOGLE_APPLICATION_CREDENTIALS.
+ * clientes/ y serviceAccount.json están en .gitignore.
  * firebase-admin NO pasa por las reglas de seguridad: úsalos con cuidado.
  */
 import { existsSync, readFileSync } from 'node:fs';
@@ -20,18 +22,21 @@ export const TODAS_LAS_COLECCIONES = ['perfiles', ...COLECCIONES_CATALOGO, ...CO
 
 export type Conexion = { app: App; db: Firestore; auth: ReturnType<typeof getAuth>; projectId: string };
 
-export function conectar(): Conexion {
+export function conectar(clienteForzado?: string): Conexion {
   // Emulador (pruebas): no necesita clave
   if (process.env.FIRESTORE_EMULATOR_HOST) {
     const projectId = process.env.GCLOUD_PROJECT || 'demo-melastock';
     const app = initializeApp({ projectId });
     return { app, db: getFirestore(app), auth: getAuth(app), projectId };
   }
-  const ruta = process.env.GOOGLE_APPLICATION_CREDENTIALS || resolve(process.cwd(), 'serviceAccount.json');
+  const cliente = clienteForzado ?? argumentos().valor('cliente');
+  const ruta = cliente
+    ? resolve(carpetaCliente(cliente), 'serviceAccount.json')
+    : process.env.GOOGLE_APPLICATION_CREDENTIALS || resolve(process.cwd(), 'serviceAccount.json');
   if (!existsSync(ruta)) {
     console.error(`\n✘ No se encontró la clave de cuenta de servicio en:\n  ${ruta}\n`);
     console.error('  Descárgala en Firebase Console > Configuración del proyecto > Cuentas de servicio >');
-    console.error('  "Generar nueva clave privada" y guárdala como serviceAccount.json en la raíz del proyecto.\n');
+    console.error(`  "Generar nueva clave privada" y guárdala en esa ruta.\n`);
     process.exit(1);
   }
   const clave = JSON.parse(readFileSync(ruta, 'utf8')) as { project_id: string };
@@ -40,7 +45,22 @@ export function conectar(): Conexion {
 }
 
 /** Opciones que llevan un valor a continuación (el resto son banderas) */
-const OPCIONES_CON_VALOR = new Set(['--admin-email', '--admin-password', '--admin-nombre']);
+const OPCIONES_CON_VALOR = new Set(['--admin-email', '--admin-password', '--admin-nombre', '--cliente', '--email', '--password', '--nombre']);
+
+/** Carpeta de configuración de un cliente: clientes/<nombre> */
+export function carpetaCliente(nombre: string): string {
+  if (!/^[a-z0-9-]{2,40}$/.test(nombre)) {
+    console.error(`\n✘ Nombre de cliente inválido: "${nombre}". Usa minúsculas, números y guiones (ej. taller-juan).\n`);
+    process.exit(1);
+  }
+  return resolve(process.cwd(), 'clientes', nombre);
+}
+
+/** Carpeta de respaldos: backups/ (demo) o backups/<cliente>/ */
+export function carpetaBackups(): string {
+  const cliente = argumentos().valor('cliente');
+  return cliente ? resolve(process.cwd(), 'backups', cliente) : resolve(process.cwd(), 'backups');
+}
 
 /**
  * Lee la línea de comandos: `--opcion valor`, `--bandera` y argumentos sueltos.

@@ -11,7 +11,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { conectar, hoyArchivo, TODAS_LAS_COLECCIONES } from './lib/admin';
+import { carpetaBackups, conectar, hoyArchivo, TODAS_LAS_COLECCIONES } from './lib/admin';
 import { aJSON, type Respaldo } from './lib/respaldo';
 
 async function main() {
@@ -27,7 +27,7 @@ async function main() {
     console.log(`  ${col.padEnd(16)} ${snap.size}`);
   }
 
-  const carpeta = resolve(process.cwd(), 'backups');
+  const carpeta = carpetaBackups();
   mkdirSync(carpeta, { recursive: true });
   let archivo = resolve(carpeta, `melastock-${hoyArchivo()}.json`);
   if (existsSync(archivo)) {

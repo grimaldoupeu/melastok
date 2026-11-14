@@ -132,6 +132,28 @@ Todos piden escribir el ID del proyecto antes de modificar datos.
 
 **Primer administrador** (si no usas `--admin-email`): créalo en *Authentication > Users > Add user* y en *Firestore* crea `perfiles/{uid}` con `nombre` (texto), `email` (texto), `rol` = `"admin"` y `activo` = `true`.
 
+## Un proyecto Firebase por cliente
+
+Cada tienda tiene **su propio proyecto Firebase**: su base empieza vacía y nadie ve los datos de otra. El proyecto `melastock-e890d` queda como **demostración** (datos de `npm run seed`, APK del perfil `preview`).
+
+La configuración de cada cliente vive en `clientes/<nombre>/` (en `.gitignore`): su `.env` y su `serviceAccount.json`.
+
+```bash
+npm run cliente -- nuevo taller-juan        # crea clientes/taller-juan/.env y muestra los pasos
+# crear el proyecto en Firebase, completar el .env y guardar su serviceAccount.json
+npm run cliente -- estado taller-juan       # verifica que todo esté completo y apunte a SU proyecto
+npm run cliente -- reglas taller-juan       # despliega reglas e índices en su proyecto
+npm run cliente -- admin taller-juan --email dueño@correo.com --password Clave123 --nombre "Juan" --categorias
+npm run cliente -- apk taller-juan          # genera su APK (perfil production) y espera a que termine
+npm run cliente -- lista                    # todos los clientes
+```
+
+- El APK de cada cliente lleva incrustado su proyecto: el dueño entra con su cuenta y ve su tienda vacía, lista para agregar productos.
+- Las variables del cliente se cargan en el entorno `production` de EAS justo antes de su build: **genera un APK a la vez**.
+- Los scripts de datos funcionan por cliente con `--cliente`: `npm run backup -- --cliente taller-juan` (guarda en `backups/taller-juan/`), `npm run reset -- --cliente taller-juan`, `npm run restore -- --cliente taller-juan`.
+- Todos los APK usan el mismo paquete Android (`com.gamastudio.melastock`): en un mismo celular solo puede haber uno instalado a la vez (demo o cliente).
+- Si a un cliente le creaste una cuenta en el proyecto de demostración, desactívala allí desde **Gestionar usuarios** cuando ya tenga su propio APK.
+
 ## Respaldos
 
 - Haz `npm run backup` al menos una vez por semana y antes de cualquier `reset` o `restore`.

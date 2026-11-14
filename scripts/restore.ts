@@ -13,11 +13,11 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { argumentos, borrarColeccion, conectar, confirmarProyecto } from './lib/admin';
+import { argumentos, borrarColeccion, carpetaBackups, conectar, confirmarProyecto } from './lib/admin';
 import { deJSON, type Respaldo } from './lib/respaldo';
 
 function respaldoMasReciente(): string | null {
-  const carpeta = resolve(process.cwd(), 'backups');
+  const carpeta = carpetaBackups();
   if (!existsSync(carpeta)) return null;
   const archivos = readdirSync(carpeta).filter((f) => /^melastock-.*\.json$/.test(f)).sort();
   return archivos.length ? resolve(carpeta, archivos[archivos.length - 1]) : null;

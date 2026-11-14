@@ -32,6 +32,12 @@ Lee también `AGENTS.md` (convenciones de Expo) y `README.md` (modelo de datos, 
 - `resumen_diario/{dia}` solo cambia junto con una venta nueva, una anulación o un pago de pedido nuevo; Inicio, Reportes y el cierre de caja leen de ahí.
 - Fechas dentro de arreglos (pagos, historial de etapas) usan `Timestamp.now()` porque Firestore no admite `serverTimestamp()` en arreglos; las reglas exigen ±15 min respecto al servidor.
 
+## Clientes (un proyecto Firebase por tienda)
+
+- `melastock-e890d` es el proyecto de **demostración** (raíz `.env` y `serviceAccount.json`, APK perfil `preview`).
+- Cada cliente tiene su propio proyecto Firebase y su carpeta `clientes/<nombre>/` (en `.gitignore`) con `.env` y `serviceAccount.json`. Se gestiona con `npm run cliente -- <lista|nuevo|estado|reglas|admin|apk> <nombre>` (`scripts/cliente.ts`); el APK del cliente usa el perfil `production` de EAS.
+- Nunca mezclar: no escribir datos de un cliente con la clave de otro proyecto. Los scripts de datos aceptan `--cliente <nombre>`.
+
 ## Scripts de administración
 
 `scripts/seed.ts`, `reset.ts`, `backup.ts`, `restore.ts` usan `firebase-admin` con `serviceAccount.json` en la raíz (en `.gitignore`; nunca lo subas). No pasan por las reglas: los datos que escriben deben respetar el mismo modelo que las transacciones. Todos piden escribir el ID del proyecto antes de modificar datos. Con `FIRESTORE_EMULATOR_HOST` definido se conectan al emulador sin clave.

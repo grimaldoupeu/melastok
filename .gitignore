@@ -53,3 +53,6 @@ firestore-debug.log
 
 # Respaldos de la base de datos (contienen datos de clientes)
 backups/
+
+# Configuración y claves de cada cliente (un proyecto Firebase por tienda)
+clientes/
