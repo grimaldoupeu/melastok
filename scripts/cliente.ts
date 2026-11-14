@@ -28,6 +28,7 @@ import { CATEGORIAS_SUGERIDAS } from '../src/types/db';
 import { argumentos, carpetaCliente, conectar, confirmarProyecto, contar } from './lib/admin';
 
 const VARIABLES = [
+  'EXPO_PUBLIC_CLIENTE',
   'EXPO_PUBLIC_FIREBASE_API_KEY',
   'EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN',
   'EXPO_PUBLIC_FIREBASE_PROJECT_ID',
@@ -41,7 +42,10 @@ const VARIABLES = [
   'EXPO_PUBLIC_BUSINESS_ADDRESS',
 ];
 
-const PLANTILLA = `# MelaStock · configuración del cliente
+const plantilla = (nombre: string) => `# MelaStock · configuración del cliente
+# Identificador del cliente (carpeta de fotos en Cloudinary: melastock/<cliente>/productos). No cambiar.
+EXPO_PUBLIC_CLIENTE=${nombre}
+
 # 1) Firebase: Consola > Configuración del proyecto > Tus apps > App web > firebaseConfig
 EXPO_PUBLIC_FIREBASE_API_KEY=
 EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=
@@ -50,7 +54,8 @@ EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=
 EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
 EXPO_PUBLIC_FIREBASE_APP_ID=
 
-# 2) Cloudinary (fotos de productos). Puede ser la misma cuenta de GAMA Studio.
+# 2) Cloudinary (fotos de productos). Puede ser la misma cuenta de GAMA Studio:
+#    cada cliente sube a su propia carpeta melastock/<cliente>/productos.
 EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME=
 EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET=
 
@@ -81,6 +86,7 @@ function verificar(nombre: string, { exigirClave = true } = {}): string {
   const errores: string[] = [];
   if (faltan.length) errores.push(`Variables vacías en .env: ${faltan.join(', ')}`);
   const projectId = env.EXPO_PUBLIC_FIREBASE_PROJECT_ID;
+  if (env.EXPO_PUBLIC_CLIENTE && env.EXPO_PUBLIC_CLIENTE !== nombre) errores.push(`EXPO_PUBLIC_CLIENTE es "${env.EXPO_PUBLIC_CLIENTE}" pero el cliente es "${nombre}": sus fotos irían a otra carpeta`);
   if (projectId === 'melastock-e890d') errores.push('El .env apunta al proyecto de DEMOSTRACIÓN (melastock-e890d). Cada cliente necesita su propio proyecto Firebase.');
   const clave = resolve(carpetaCliente(nombre), 'serviceAccount.json');
   if (exigirClave) {
@@ -138,7 +144,7 @@ async function main() {
       mkdirSync(carpeta, { recursive: true });
       const env = resolve(carpeta, '.env');
       if (existsSync(env)) console.log(`\n  ${relative(process.cwd(), env)} ya existe; no se sobrescribe.`);
-      else writeFileSync(env, PLANTILLA);
+      else writeFileSync(env, plantilla(nombre));
       console.log(`
 ✔ Carpeta lista: ${relative(process.cwd(), carpeta)}
 
